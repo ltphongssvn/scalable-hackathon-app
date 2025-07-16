@@ -86,19 +86,22 @@ class UserController {
    */
   async login(req, res, next) {
     try {
-      const { email, password } = req.body;
-
+      const { email, username, password } = req.body;
+      
+      // Extract identifier - can be either email or username
+      const identifier = email || username;
+      
       // Validate input
-      if (!email || !password) {
+      if (!identifier || !password) {
         return res.status(400).json({
           success: false,
           message: 'Email/username and password are required'
         });
       }
-
+      
       // Call service layer for authentication
-      const result = await userService.authenticateUser(email, password);
-
+      const result = await userService.loginUser(identifier, password);
+      
       // Send successful response
       res.status(200).json({
         success: true,
@@ -109,19 +112,22 @@ class UserController {
         }
       });
     } catch (error) {
-      console.error('Login error:', error);
-
-      if (error.message === 'Invalid credentials') {
-        res.status(401).json({
+      console.error('Login controller error:', error);
+      
+      // Handle specific errors
+      if (error.message === 'Invalid credentials' || 
+          error.message.includes('deactivated')) {
+        return res.status(401).json({
           success: false,
-          message: 'Invalid email/username or password'
-        });
-      } else {
-        res.status(500).json({
-          success: false,
-          message: 'An error occurred during login'
+          message: error.message
         });
       }
+      
+      // Generic error response
+      res.status(500).json({
+        success: false,
+        message: 'An error occurred during login'
+      });
     }
   }
 
