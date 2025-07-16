@@ -29,10 +29,19 @@ pool.on('connect', (client) => {
   console.log('✅ Connected to PostgreSQL database');
 });
 
-// Log errors on idle clients
+// Handle errors on idle clients more gracefully
 pool.on('error', (err, client) => {
-  console.error('❌ Unexpected error on idle database client', err);
-  // In production, you might want to send this to a monitoring service
+  // Neon serverless PostgreSQL closes idle connections, which is expected behavior
+  if (err.message === 'Connection terminated unexpectedly') {
+    if (config.isDevelopment) {
+      console.log('🔄 Idle database connection closed by server (normal for Neon)');
+    }
+    // Don't log scary error messages for expected behavior
+    return;
+  }
+  
+  // For other errors, log them as before
+  console.error('❌ Database error:', err.message);
 });
 
 // Helper function to test the database connection
