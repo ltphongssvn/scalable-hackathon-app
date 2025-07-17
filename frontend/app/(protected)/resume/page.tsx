@@ -3,6 +3,8 @@
 import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { useAuth } from '@/app/contexts/AuthContext'
+import { ArrowLeft } from 'lucide-react'
+import ResumeList from './ResumeList'
 
 export default function ResumePage() {
     const auth = useAuth()
@@ -11,6 +13,7 @@ export default function ResumePage() {
     const [uploadStatus, setUploadStatus] = useState<'idle' | 'uploading' | 'success' | 'error'>('idle')
     const [errorMessage, setErrorMessage] = useState<string>('')
     const [successMessage, setSuccessMessage] = useState<string>('')
+    const [refreshList, setRefreshList] = useState(0)
 
     // Protect the route - redirect to login if not authenticated
     useEffect(() => {
@@ -59,7 +62,6 @@ export default function ResumePage() {
         formData.append('resume', selectedFile)
 
         try {
-            // Note: NEXT_PUBLIC_API_URL already includes /api/v1, so we just append /resumes/upload
             const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/resumes/upload`, {
                 method: 'POST',
                 headers: {
@@ -74,11 +76,21 @@ export default function ResumePage() {
                 setUploadStatus('success')
                 setSuccessMessage('Resume uploaded successfully!')
                 setSelectedFile(null)
+
                 // Reset file input
                 const fileInput = document.getElementById('resume-upload') as HTMLInputElement
                 if (fileInput) {
                     fileInput.value = ''
                 }
+
+                // Trigger a refresh of the resume list
+                setRefreshList(prev => prev + 1)
+
+                // Clear success message after 3 seconds
+                setTimeout(() => {
+                    setSuccessMessage('')
+                    setUploadStatus('idle')
+                }, 3000)
             } else {
                 setUploadStatus('error')
                 setErrorMessage(data.message || 'Failed to upload resume')
@@ -104,39 +116,63 @@ export default function ResumePage() {
     }
 
     return (
-        <div className="min-h-screen bg-gray-50 py-12">
-            <div className="container mx-auto px-4 max-w-4xl">
-                <div className="bg-white rounded-lg shadow-lg p-8">
-                    <h1 className="text-3xl font-bold mb-2 text-gray-800">Resume Management</h1>
-                    <p className="text-gray-600 mb-8">
-                        Welcome, {auth.user.fullName}! Upload and manage your resumes here.
-                    </p>
+        <div className="min-h-screen bg-gray-50">
+            <div className="container mx-auto px-4 py-8 max-w-4xl">
+                {/* Header with back navigation */}
+                <div className="mb-6">
+                    <button
+                        onClick={() => router.push('/dashboard')}
+                        className="flex items-center text-gray-600 hover:text-gray-900 transition-colors"
+                    >
+                        <ArrowLeft className="h-5 w-5 mr-2" />
+                        Back to Dashboard
+                    </button>
+                </div>
 
-                    <div className="border-2 border-dashed border-gray-300 rounded-lg p-8 text-center">
-                        <svg
-                            className="mx-auto h-12 w-12 text-gray-400 mb-4"
-                            stroke="currentColor"
-                            fill="none"
-                            viewBox="0 0 48 48"
-                            aria-hidden="true"
-                        >
-                            <path
-                                d="M28 8H12a4 4 0 00-4 4v20m32-12v8m0 0v8a4 4 0 01-4 4H12a4 4 0 01-4-4v-4m32-4l-3.172-3.172a4 4 0 00-5.656 0L28 28M8 32l9.172-9.172a4 4 0 015.656 0L28 28m0 0l4 4m4-24h8m-4-4v8m-12 4h.02"
-                                strokeWidth={2}
-                                strokeLinecap="round"
-                                strokeLinejoin="round"
-                            />
-                        </svg>
+                {/* Main content */}
+                <div className="bg-white rounded-lg shadow-lg">
+                    {/* Page header */}
+                    <div className="p-8 border-b border-gray-200">
+                        <h1 className="text-3xl font-bold text-gray-800">Upload Your Resume</h1>
+                        <p className="text-gray-600 mt-2">
+                            Upload your resume in PDF or Word format. We'll parse it using AI to extract relevant information.
+                        </p>
+                    </div>
 
-                        <div className="mb-4">
+                    {/* Upload section */}
+                    <div className="p-8">
+                        {/* Success message at the top if there is one */}
+                        {successMessage && (
+                            <div className="mb-6 p-4 bg-green-50 border border-green-200 rounded-lg">
+                                <p className="text-green-700 font-medium">{successMessage}</p>
+                            </div>
+                        )}
+
+                        {/* Upload area */}
+                        <div className="border-2 border-dashed border-gray-300 rounded-lg p-8 text-center hover:border-gray-400 transition-colors">
+                            <svg
+                                className="mx-auto h-16 w-16 text-gray-400 mb-4"
+                                fill="none"
+                                viewBox="0 0 24 24"
+                                stroke="currentColor"
+                            >
+                                <path
+                                    strokeLinecap="round"
+                                    strokeLinejoin="round"
+                                    strokeWidth={1.5}
+                                    d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"
+                                />
+                            </svg>
+
                             <label htmlFor="resume-upload" className="cursor-pointer">
-                <span className="mt-2 block text-sm font-medium text-gray-700">
-                  Click to upload or drag and drop
-                </span>
-                                <span className="text-xs text-gray-500">
-                  PDF, DOC, DOCX up to 5MB
-                </span>
+                                <span className="mt-2 block text-base font-medium text-gray-700">
+                                    Select File
+                                </span>
+                                <span className="text-sm text-gray-500">
+                                    PDF, DOC, or DOCX up to 5MB
+                                </span>
                             </label>
+
                             <input
                                 id="resume-upload"
                                 name="resume-upload"
@@ -144,12 +180,14 @@ export default function ResumePage() {
                                 className="sr-only"
                                 accept=".pdf,.doc,.docx"
                                 onChange={handleFileSelect}
+                                disabled={uploadStatus === 'uploading'}
                             />
                         </div>
 
+                        {/* Selected file info */}
                         {selectedFile && (
-                            <div className="mt-4">
-                                <p className="text-sm text-gray-600">
+                            <div className="mt-4 p-4 bg-gray-50 rounded-lg">
+                                <p className="text-sm text-gray-700">
                                     Selected: <span className="font-medium">{selectedFile.name}</span>
                                 </p>
                                 <p className="text-xs text-gray-500 mt-1">
@@ -158,49 +196,55 @@ export default function ResumePage() {
                             </div>
                         )}
 
+                        {/* Error message */}
                         {errorMessage && (
-                            <div className="mt-4 p-3 bg-red-50 rounded-md">
+                            <div className="mt-4 p-4 bg-red-50 border border-red-200 rounded-lg">
                                 <p className="text-sm text-red-600">{errorMessage}</p>
                             </div>
                         )}
 
-                        {successMessage && (
-                            <div className="mt-4 p-3 bg-green-50 rounded-md">
-                                <p className="text-sm text-green-600">{successMessage}</p>
-                            </div>
-                        )}
-
+                        {/* Upload button */}
                         {selectedFile && uploadStatus !== 'success' && (
                             <button
                                 onClick={handleUpload}
                                 disabled={uploadStatus === 'uploading'}
-                                className={`mt-6 px-6 py-3 rounded-md text-white font-medium transition-colors ${
+                                className={`mt-6 w-full py-3 px-4 rounded-lg font-medium text-white transition-all ${
                                     uploadStatus === 'uploading'
                                         ? 'bg-gray-400 cursor-not-allowed'
-                                        : 'bg-blue-600 hover:bg-blue-700'
+                                        : 'bg-blue-600 hover:bg-blue-700 hover:shadow-lg'
                                 }`}
                             >
-                                {uploadStatus === 'uploading' ? (
-                                    <span className="flex items-center">
-                    <svg className="animate-spin -ml-1 mr-3 h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
-                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-                    </svg>
-                    Uploading...
-                  </span>
-                                ) : (
-                                    'Upload Resume'
-                                )}
+                                {uploadStatus === 'uploading' ? 'Uploading...' : 'Upload Resume'}
                             </button>
                         )}
+
+                        {/* Resume list component */}
+                        <ResumeList key={refreshList} />
                     </div>
 
-                    {/* Future: List of uploaded resumes will go here */}
-                    <div className="mt-8">
-                        <h2 className="text-xl font-semibold mb-4 text-gray-800">Your Uploaded Resumes</h2>
-                        <p className="text-gray-600 text-sm">
-                            Your uploaded resumes will appear here. This feature is coming soon!
-                        </p>
+                    {/* Coming soon section */}
+                    <div className="p-8 bg-gray-50 border-t border-gray-200">
+                        <h2 className="text-xl font-semibold mb-4 text-gray-800">Coming Soon</h2>
+                        <div className="space-y-3">
+                            <div className="flex items-start">
+                                <svg className="h-6 w-6 text-blue-500 mr-3 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z" />
+                                </svg>
+                                <div>
+                                    <h3 className="font-medium text-gray-800">Voice Resume Recording</h3>
+                                    <p className="text-sm text-gray-600">Record your experience using Whisper AI</p>
+                                </div>
+                            </div>
+                            <div className="flex items-start">
+                                <svg className="h-6 w-6 text-blue-500 mr-3 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
+                                </svg>
+                                <div>
+                                    <h3 className="font-medium text-gray-800">AI Resume Parsing</h3>
+                                    <p className="text-sm text-gray-600">Automatic extraction with Hugging Face</p>
+                                </div>
+                            </div>
+                        </div>
                     </div>
                 </div>
             </div>

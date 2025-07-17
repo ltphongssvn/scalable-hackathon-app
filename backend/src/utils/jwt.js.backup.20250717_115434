@@ -14,44 +14,24 @@ const { AppError } = require('../middleware/errorHandler');
  * This function creates a signed JWT containing the user's ID and email.
  * The token is used for authenticating subsequent API requests.
  *
- * @param {Object} userData - The user data object
- * @param {number} userData.userId - The user's database ID
- * @param {string} userData.email - The user's email address
- * @param {string} userData.username - The user's username (optional)
+ * @param {Object} user - The user object
+ * @param {number} user.id - The user's database ID
+ * @param {string} user.email - The user's email address
  * @returns {string} The signed JWT token
  */
-const generateToken = (userData) => {
-  // Debug logging to help identify issues during development
-  console.log('generateToken received:', userData);
-
+const generateToken = (user) => {
   // Create the payload - what data goes inside the token
   // Keep this minimal for security and performance
-  //
-  // IMPORTANT FIX: The service layer passes an object with 'userId' property,
-  // not 'id'. This was causing userId to be undefined in the token.
   const payload = {
-    userId: userData.userId,  // Changed from userData.id to userData.userId
-    email: userData.email
+    userId: user.id,
+    email: user.email
   };
-
-  // Validate that we have the required fields before creating the token
-  if (!payload.userId || !payload.email) {
-    console.error('Missing required fields for token generation:', {
-      hasUserId: !!payload.userId,
-      hasEmail: !!payload.email,
-      receivedData: userData
-    });
-    throw new Error('Cannot generate token: missing userId or email');
-  }
 
   // Sign the token with our secret
   // The expiresIn option automatically adds an 'exp' claim
   const token = jwt.sign(payload, config.security.jwtSecret, {
     expiresIn: config.security.jwtExpiration
   });
-
-  // Debug logging to verify the token was created correctly
-  console.log('Generated token payload:', payload);
 
   return token;
 };

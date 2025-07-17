@@ -1,5 +1,4 @@
 'use client'
-
 import { useAuth } from '@/app/contexts/AuthContext'
 import { useRouter } from 'next/navigation'
 import { useEffect, useState, useRef } from 'react'
@@ -50,7 +49,6 @@ export default function ResumePage() {
             'application/msword',                                                          // .doc files
             'application/vnd.openxmlformats-officedocument.wordprocessingml.document'    // .docx files
         ]
-
         const maxSize = 5 * 1024 * 1024 // 5MB in bytes
 
         // Check file type
@@ -74,7 +72,6 @@ export default function ResumePage() {
     // This runs when user selects a file through the file dialog
     const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
         const file = e.target.files?.[0] // Get the first selected file
-
         if (file && validateFile(file)) {
             setSelectedFile(file)
             setError(null) // Clear any previous errors
@@ -99,9 +96,8 @@ export default function ResumePage() {
             formData.append('resume', selectedFile) // 'resume' is the field name the backend expects
 
             // Make the API request
-            // FIXED: Changed from '/api/resume/upload' to '/resumes/upload'
-            // This matches the backend route structure where resume routes are at /api/v1/resumes
-            const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/resumes/upload`, {
+            // Note: We don't set Content-Type header - FormData handles this automatically
+            const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/resume/upload`, {
                 method: 'POST',
                 headers: {
                     'Authorization': `Bearer ${token}` // Include JWT token for authentication
@@ -170,7 +166,6 @@ export default function ResumePage() {
                     >
                         ← Back to Dashboard
                     </button>
-
                     <h1 className="text-3xl font-bold text-gray-900">Upload Your Resume</h1>
                     <p className="mt-2 text-gray-600">
                         Upload your resume in PDF or Word format. We'll parse it using AI to extract relevant information.
