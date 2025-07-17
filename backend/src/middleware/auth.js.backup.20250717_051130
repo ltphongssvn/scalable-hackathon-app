@@ -1,24 +1,23 @@
 // Authentication Middleware
 // This middleware verifies JWT tokens and protects routes
+
 const { verifyToken } = require('../utils/jwt');
 const { query } = require('../config/database');
 
 /**
  * Authentication middleware
- *
+ * 
  * This middleware:
  * 1. Extracts the JWT token from the Authorization header
  * 2. Verifies the token
  * 3. Loads the user from the database
  * 4. Attaches the user to the request object
- *
- * ARCHITECTURAL IMPROVEMENT: Now properly handles AppError objects
- * that carry their own status codes, making error handling more consistent
  */
 async function authenticate(req, res, next) {
   try {
     // Extract token from Authorization header
     const authHeader = req.headers.authorization;
+    
     if (!authHeader || !authHeader.startsWith('Bearer ')) {
       return res.status(401).json({
         success: false,
@@ -34,8 +33,8 @@ async function authenticate(req, res, next) {
 
     // Load user from database
     const result = await query(
-        'SELECT id, email, username, full_name, created_at FROM users WHERE id = $1',
-        [decoded.userId]
+      'SELECT id, email, username, full_name, created_at FROM users WHERE id = $1',
+      [decoded.userId]
     );
 
     if (result.rows.length === 0) {
@@ -58,17 +57,6 @@ async function authenticate(req, res, next) {
   } catch (error) {
     console.error('Authentication error:', error);
 
-    // ARCHITECTURAL FIX: Check if the error has a statusCode property
-    // This handles AppError objects that carry their own status codes
-    if (error.statusCode) {
-      return res.status(error.statusCode).json({
-        success: false,
-        message: error.message
-      });
-    }
-
-    // Legacy error handling for backward compatibility
-    // These checks remain in case other parts of the system still throw these error types
     if (error.name === 'JsonWebTokenError') {
       return res.status(401).json({
         success: false,
@@ -83,8 +71,6 @@ async function authenticate(req, res, next) {
       });
     }
 
-    // Generic error fallback - only reached if error doesn't have statusCode
-    // and isn't a recognized JWT error type
     return res.status(500).json({
       success: false,
       message: 'Authentication error'
@@ -94,13 +80,14 @@ async function authenticate(req, res, next) {
 
 /**
  * Optional authentication middleware
- *
+ * 
  * Similar to authenticate, but doesn't fail if no token is provided
  * Useful for routes that can work with or without authentication
  */
 async function optionalAuth(req, res, next) {
   try {
     const authHeader = req.headers.authorization;
+    
     if (!authHeader || !authHeader.startsWith('Bearer ')) {
       // No token provided, but that's okay for optional auth
       return next();
@@ -110,8 +97,8 @@ async function optionalAuth(req, res, next) {
     const decoded = verifyToken(token);
 
     const result = await query(
-        'SELECT id, email, username, full_name FROM users WHERE id = $1',
-        [decoded.userId]
+      'SELECT id, email, username, full_name FROM users WHERE id = $1',
+      [decoded.userId]
     );
 
     if (result.rows.length > 0) {
