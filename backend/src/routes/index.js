@@ -3,6 +3,7 @@
 const express = require('express');
 const router = express.Router();
 const userRoutes = require('./userRoutes');
+const resumeRoutes = require('./resumeRoutes');
 
 /**
  * API Routes Configuration
@@ -23,6 +24,7 @@ router.get('/health', (req, res) => {
 
 // Feature routes
 router.use('/users', userRoutes);
+router.use('/resumes', resumeRoutes);
 
 // 404 handler for API routes - Express 5 compatible
 // In Express 5, we need to use a different approach for catch-all routes

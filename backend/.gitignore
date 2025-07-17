@@ -1,0 +1,4 @@
+
+# Uploaded files (keep directory structure but not files)
+uploads/*
+!uploads/.gitkeep
