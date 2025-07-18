@@ -1,9 +1,8 @@
-// frontend/app/(dashboard)/dashboard/resume/page.tsx
 'use client'
+
 import { useAuth } from '@/app/contexts/AuthContext'
 import { useRouter } from 'next/navigation'
 import { useEffect, useState, useRef } from 'react'
-import ResumeList from './ResumeList'
 
 // TypeScript interfaces define the shape of our data
 // This helps catch type errors during development and provides better IDE support
@@ -29,7 +28,6 @@ export default function ResumePage() {
     const [uploadProgress, setUploadProgress] = useState(0)
     const [error, setError] = useState<string | null>(null)
     const [success, setSuccess] = useState<string | null>(null)
-    const [refreshKey, setRefreshKey] = useState(0) // New state to trigger ResumeList refresh
 
     // useRef creates a reference to the file input DOM element
     // This allows us to programmatically reset the input after successful upload
@@ -101,6 +99,8 @@ export default function ResumePage() {
             formData.append('resume', selectedFile) // 'resume' is the field name the backend expects
 
             // Make the API request
+            // FIXED: Changed from '/api/resume/upload' to '/resumes/upload'
+            // This matches the backend route structure where resume routes are at /api/v1/resumes
             const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/resumes/upload`, {
                 method: 'POST',
                 headers: {
@@ -128,9 +128,10 @@ export default function ResumePage() {
                 fileInputRef.current.value = ''
             }
 
-            // Trigger a refresh of the ResumeList component
-            // By changing the key, React will remount the component and refetch data
-            setRefreshKey(prev => prev + 1)
+            // Here you could also:
+            // - Store the fileUrl in state for display
+            // - Redirect to a results page
+            // - Trigger a refetch of user's resumes
 
         } catch (err) {
             // Error handling with user-friendly messages
@@ -259,13 +260,6 @@ export default function ResumePage() {
                             {uploading ? 'Uploading...' : 'Upload Resume'}
                         </button>
                     </div>
-                </div>
-
-                {/* Resume List Section - This is the key integration! */}
-                {/* The key prop forces a remount when refreshKey changes, triggering a data refetch */}
-                <div className="mt-8 bg-white shadow rounded-lg p-6">
-                    <h2 className="text-lg font-semibold text-gray-900 mb-4">Your Uploaded Resumes</h2>
-                    <ResumeList key={refreshKey} />
                 </div>
 
                 {/* Future Features Preview Section */}
