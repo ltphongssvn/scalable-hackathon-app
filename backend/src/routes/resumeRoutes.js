@@ -13,7 +13,7 @@ const resumeController = require('../controllers/resumeController');
 /**
  * POST /api/v1/resume/upload
  * Upload a new resume
- *
+ * 
  * The upload.single('resume') middleware:
  * 1. Looks for a file in the 'resume' field of the multipart request
  * 2. Validates the file type and size
@@ -36,6 +36,34 @@ router.get(
     '/',
     authenticate,
     resumeController.getUserResumes
+);
+
+/**
+ * GET /api/v1/resume/:id/parsed
+ * Get detailed parsed data for a specific resume
+ * 
+ * This endpoint returns the AI-extracted information from a resume,
+ * including name, email, skills, experience, and education.
+ * It's useful for displaying the full parsed details on a resume detail page.
+ */
+router.get(
+    '/:id/parsed',
+    authenticate,
+    resumeController.getResumeParsedData
+);
+
+/**
+ * POST /api/v1/resume/:id/reparse
+ * Trigger re-parsing of a resume
+ * 
+ * This endpoint allows users to re-run the AI parsing on a resume.
+ * Useful if the initial parsing failed or if parsing logic has been improved.
+ * The parsing happens asynchronously, so this returns immediately.
+ */
+router.post(
+    '/:id/reparse',
+    authenticate,
+    resumeController.reparseResume
 );
 
 /**

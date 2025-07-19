@@ -1,0 +1,199 @@
+// Hugging Face Service
+// This service handles all interactions with Hugging Face's API for resume parsing
+
+const axios = require('axios');
+const fs = require('fs').promises;
+const FormData = require('form-data');
+
+class HuggingFaceService {
+    constructor() {
+        // Initialize with API key from environment
+        this.apiKey = process.env.HUGGINGFACE_API_KEY;
+
+        // Base URL for Hugging Face Inference API
+        this.baseURL = 'https://api-inference.huggingface.co/models/';
+
+        // We'll use a document question-answering model for resume parsing
+        // This model can extract specific information from documents
+        this.resumeParsingModel = 'impira/layoutlm-document-qa';
+    }
+
+    /**
+     * Parse a resume file and extract structured information
+     * @param {string} filePath - Path to the resume file
+     * @returns {Object} Extracted resume information
+     */
+    async parseResume(filePath) {
+        try {
+            // Read the file content
+            const fileContent = await fs.readFile(filePath);
+
+            // Define the questions we want to ask about the resume
+            // These questions will guide the model to extract specific information
+            const questions = [
+                "What is the person's name?",
+                "What is the email address?",
+                "What is the phone number?",
+                "What are the technical skills?",
+                "What is the work experience?",
+                "What is the education background?",
+                "What are the certifications?"
+            ];
+
+            // Store all extracted information
+            const extractedInfo = {};
+
+            // Process each question
+            for (const question of questions) {
+                try {
+                    const answer = await this.queryDocument(fileContent, question);
+
+                    // Map questions to structured keys
+                    const keyMap = {
+                        "What is the person's name?": 'name',
+                        "What is the email address?": 'email',
+                        "What is the phone number?": 'phone',
+                        "What are the technical skills?": 'skills',
+                        "What is the work experience?": 'experience',
+                        "What is the education background?": 'education',
+                        "What are the certifications?": 'certifications'
+                    };
+
+                    const key = keyMap[question];
+                    if (answer) {
+                        extractedInfo[key] = answer;
+                    }
+                } catch (error) {
+                    console.error(`Error extracting ${question}:`, error.message);
+                }
+            }
+
+            return {
+                success: true,
+                data: extractedInfo
+            };
+
+        } catch (error) {
+            console.error('Resume parsing error:', error);
+            return {
+                success: false,
+                error: error.message
+            };
+        }
+    }
+
+    /**
+     * Query a document with a specific question
+     * @param {Buffer} fileContent - The document content
+     * @param {string} question - The question to ask about the document
+     * @returns {string} The answer extracted from the document
+     */
+    async queryDocument(fileContent, question) {
+        try {
+            // Create form data for the API request
+            const formData = new FormData();
+            formData.append('file', fileContent, 'resume.pdf');
+            formData.append('question', question);
+
+            // Make the API request
+            const response = await axios.post(
+                `${this.baseURL}${this.resumeParsingModel}`,
+                formData,
+                {
+                    headers: {
+                        'Authorization': `Bearer ${this.apiKey}`,
+                        ...formData.getHeaders()
+                    },
+                    timeout: 30000 // 30 second timeout
+                }
+            );
+
+            // Extract the answer from the response
+            if (response.data && response.data.length > 0) {
+                return response.data[0].answer;
+            }
+
+            return null;
+
+        } catch (error) {
+            // Handle specific API errors
+            if (error.response) {
+                if (error.response.status === 503) {
+                    throw new Error('Model is loading. Please try again in a moment.');
+                } else if (error.response.status === 401) {
+                    throw new Error('Invalid API key');
+                }
+            }
+            throw error;
+        }
+    }
+
+    /**
+     * Alternative parsing method using a text generation model
+     * This can be used if the document QA model is not available
+     * @param {string} textContent - Text content of the resume
+     * @returns {Object} Extracted resume information
+     */
+    async parseResumeWithTextGeneration(textContent) {
+        try {
+            const prompt = `Extract the following information from this resume and return it in JSON format:
+            - name
+            - email
+            - phone
+            - skills (as an array)
+            - experience (as an array of job titles and companies)
+            - education (as an array of degrees and institutions)
+            
+            Resume content:
+            ${textContent}
+            
+            JSON output:`;
+
+            const response = await axios.post(
+                `${this.baseURL}meta-llama/Llama-2-7b-chat-hf`,
+                {
+                    inputs: prompt,
+                    parameters: {
+                        max_new_tokens: 500,
+                        temperature: 0.1,
+                        return_full_text: false
+                    }
+                },
+                {
+                    headers: {
+                        'Authorization': `Bearer ${this.apiKey}`,
+                        'Content-Type': 'application/json'
+                    }
+                }
+            );
+
+            // Try to parse the JSON response
+            try {
+                const jsonMatch = response.data[0].generated_text.match(/\{[\s\S]*\}/);
+                if (jsonMatch) {
+                    return {
+                        success: true,
+                        data: JSON.parse(jsonMatch[0])
+                    };
+                }
+            } catch (parseError) {
+                console.error('Error parsing JSON response:', parseError);
+            }
+
+            return {
+                success: false,
+                error: 'Failed to parse response as JSON'
+            };
+
+        } catch (error) {
+            console.error('Text generation parsing error:', error);
+            return {
+                success: false,
+                error: error.message
+            };
+        }
+    }
+}
+
+// Export a singleton instance
+module.exports = new HuggingFaceService();

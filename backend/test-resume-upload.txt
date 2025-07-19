@@ -1,0 +1,29 @@
+Michael Chen
+Senior Software Engineer
+
+Email: michael.chen@techcorp.com
+Phone: (555) 123-4567
+
+PROFESSIONAL SUMMARY
+Experienced software engineer with 6 years developing scalable applications.
+Specializes in Python, Java, React, and cloud architecture.
+
+EXPERIENCE
+Tech Corp - Senior Software Engineer (2021-Present)
+- Led development of microservices processing 2M daily transactions
+- Reduced system latency by 40% through optimization
+- Mentored team of 4 junior developers
+
+StartupXYZ - Software Engineer (2019-2021)
+- Built RESTful APIs serving 100K active users
+- Implemented real-time features using WebSockets
+
+EDUCATION
+MS Computer Science - Stanford University (2019)
+BS Computer Engineering - UC Berkeley (2017)
+
+SKILLS
+Languages: Python, Java, JavaScript, Go
+Frameworks: Django, Spring Boot, React, Node.js
+Cloud: AWS (Certified), Google Cloud, Kubernetes
+Databases: PostgreSQL, MongoDB, Redis

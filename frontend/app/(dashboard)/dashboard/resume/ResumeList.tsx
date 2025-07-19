@@ -5,15 +5,52 @@ import { FileText, Download, Trash2 } from 'lucide-react';
 
 interface Resume {
     id: number;
-    original_name: string;
-    file_size: number;
-    mime_type: string;
-    uploaded_at: string;
+    originalName?: string;  // Backend might send camelCase
+    original_name?: string; // Or snake_case
+    fileSize?: number;
+    file_size?: number;
+    mimeType?: string;
+    mime_type?: string;
+    uploadedAt?: string;
+    uploaded_at?: string;
     filename: string;
 }
 
+// Helper function to safely format dates
+const formatDate = (dateValue: string | undefined | null): string => {
+    if (!dateValue) return 'Unknown time';
+    
+    try {
+        const date = new Date(dateValue);
+        // Check if the date is valid
+        if (isNaN(date.getTime())) {
+            return 'Unknown time';
+        }
+        return formatDistanceToNow(date, { addSuffix: true });
+    } catch (error) {
+        console.error('Date formatting error:', error);
+        return 'Unknown time';
+    }
+};
+
+// Helper function to get value with fallback for different naming conventions
+const getResumeField = (resume: Resume, field: 'name' | 'size' | 'type' | 'date'): any => {
+    switch (field) {
+        case 'name':
+            return resume.originalName || resume.original_name || 'Unnamed file';
+        case 'size':
+            return resume.fileSize || resume.file_size || 0;
+        case 'type':
+            return resume.mimeType || resume.mime_type || 'unknown';
+        case 'date':
+            return resume.uploadedAt || resume.uploaded_at;
+        default:
+            return null;
+    }
+};
+
 export default function ResumeList() {
-    console.log('ResumeList component is mounting!'); // Debug: Verify component is executing
+    console.log('ResumeList component is mounting!');
 
     const [resumes, setResumes] = useState<Resume[]>([]);
     const [loading, setLoading] = useState(true);
@@ -26,11 +63,10 @@ export default function ResumeList() {
     const fetchResumes = async () => {
         try {
             const token = localStorage.getItem('token');
-            console.log('Token:', token); // Debug: Check if token exists
+            console.log('Token:', token);
 
-            // Using the environment variable for consistency with the upload endpoint
             const url = `${process.env.NEXT_PUBLIC_API_URL}/resumes`;
-            console.log('Fetching from URL:', url); // Debug: Check the constructed URL
+            console.log('Fetching from URL:', url);
 
             const response = await fetch(url, {
                 headers: {
@@ -38,15 +74,19 @@ export default function ResumeList() {
                 },
             });
 
-            console.log('Response status:', response.status); // Debug: Check response status
+            console.log('Response status:', response.status);
 
             if (!response.ok) {
                 throw new Error('Failed to fetch resumes');
             }
 
             const data = await response.json();
-            console.log('Fetched data:', data); // Debug: Check what data we received
-            console.log('Resumes array:', data.data); // Debug: Check the resumes array specifically
+            console.log('Fetched data:', data);
+            
+            // Log the first resume to see its structure
+            if (data.data && data.data.length > 0) {
+                console.log('First resume structure:', data.data[0]);
+            }
 
             setResumes(data.data || []);
         } catch (err) {
@@ -65,7 +105,6 @@ export default function ResumeList() {
         return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
     };
 
-    // Debug: Log the current state
     console.log('Current state - Loading:', loading, 'Error:', error, 'Resumes count:', resumes.length);
 
     if (loading) return <div className="text-center py-4">Loading resumes...</div>;
@@ -74,29 +113,35 @@ export default function ResumeList() {
 
     return (
         <div className="mt-8">
-            <h3 className="text-lg font-semibold mb-4"> </h3>
+            <h3 className="text-lg font-semibold mb-4">Your Resumes</h3>
             <div className="space-y-3">
-                {resumes.map((resume) => (
-                    <div key={resume.id} className="border rounded-lg p-4 flex items-center justify-between hover:bg-gray-50">
-                        <div className="flex items-center space-x-3">
-                            <FileText className="h-8 w-8 text-blue-500" />
-                            <div>
-                                <p className="font-medium">{resume.original_name}</p>
-                                <p className="text-sm text-gray-500">
-                                    {formatFileSize(resume.file_size)} • Uploaded {formatDistanceToNow(new Date(resume.uploaded_at), { addSuffix: true })}
-                                </p>
+                {resumes.map((resume) => {
+                    const name = getResumeField(resume, 'name');
+                    const size = getResumeField(resume, 'size');
+                    const uploadDate = getResumeField(resume, 'date');
+                    
+                    return (
+                        <div key={resume.id} className="border rounded-lg p-4 flex items-center justify-between hover:bg-gray-50">
+                            <div className="flex items-center space-x-3">
+                                <FileText className="h-8 w-8 text-blue-500" />
+                                <div>
+                                    <p className="font-medium">{name}</p>
+                                    <p className="text-sm text-gray-500">
+                                        {formatFileSize(size)} • Uploaded {formatDate(uploadDate)}
+                                    </p>
+                                </div>
+                            </div>
+                            <div className="flex space-x-2">
+                                <button className="p-2 text-blue-600 hover:bg-blue-50 rounded">
+                                    <Download className="h-5 w-5" />
+                                </button>
+                                <button className="p-2 text-red-600 hover:bg-red-50 rounded">
+                                    <Trash2 className="h-5 w-5" />
+                                </button>
                             </div>
                         </div>
-                        <div className="flex space-x-2">
-                            <button className="p-2 text-blue-600 hover:bg-blue-50 rounded">
-                                <Download className="h-5 w-5" />
-                            </button>
-                            <button className="p-2 text-red-600 hover:bg-red-50 rounded">
-                                <Trash2 className="h-5 w-5" />
-                            </button>
-                        </div>
-                    </div>
-                ))}
+                    );
+                })}
             </div>
         </div>
     );

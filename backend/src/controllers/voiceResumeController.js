@@ -1,0 +1,278 @@
+// Voice Resume Controller
+// Handles voice resume uploads and integrates with existing parsing pipeline
+
+const path = require('path');
+const fs = require('fs').promises;
+const { query } = require('../config/database');
+const voiceTranscriptionService = require('../services/ai/voiceTranscriptionService');
+const huggingFaceService = require('../services/ai/huggingfaceService');
+
+/**
+ * Upload and process a voice resume
+ * This function handles the complete voice resume pipeline:
+ * 1. Audio file upload (handled by multer)
+ * 2. Voice transcription using Whisper
+ * 3. Text processing through existing resume parser
+ * 4. Storage of results
+ */
+async function uploadVoiceResume(req, res) {
+    try {
+        // Check if an audio file was uploaded
+        if (!req.file) {
+            return res.status(400).json({
+                success: false,
+                message: 'No audio file uploaded'
+            });
+        }
+
+        const {
+            filename,
+            path: filePath,
+            size,
+            mimetype
+        } = req.file;
+
+        const originalName = req.uploadedFileOriginalName || req.file.originalname;
+        console.log(`Processing voice resume upload: ${originalName}`);
+
+        // Store the audio file metadata in database
+        const insertQuery = `
+            INSERT INTO resumes (
+                user_id,
+                filename,
+                original_name,
+                file_path,
+                file_size,
+                mime_type,
+                resume_type,
+                uploaded_at
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, NOW())
+            RETURNING id, filename, original_name, file_size, uploaded_at
+        `;
+
+        const values = [
+            req.user.id,
+            filename,
+            originalName,
+            `uploads/voice-resumes/${filename}`,
+            size,
+            mimetype,
+            'voice' // New field to distinguish voice resumes
+        ];
+
+        const result = await query(insertQuery, values);
+        const resume = result.rows[0];
+
+        console.log(`Voice resume saved to database with ID: ${resume.id}`);
+
+        // Trigger async processing
+        processVoiceResumeAsync(resume.id, filePath, req.user.id);
+
+        res.status(201).json({
+            success: true,
+            message: 'Voice resume uploaded successfully. Transcription and parsing in progress...',
+            data: {
+                id: resume.id,
+                filename: resume.original_name,
+                size: resume.file_size,
+                uploadedAt: resume.uploaded_at,
+                processingStatus: 'transcribing'
+            }
+        });
+
+    } catch (error) {
+        console.error('Voice resume upload error:', error);
+
+        // Clean up file if database operation failed
+        if (req.file) {
+            try {
+                await fs.unlink(req.file.path);
+            } catch (unlinkError) {
+                console.error('Error deleting file:', unlinkError);
+            }
+        }
+
+        res.status(500).json({
+            success: false,
+            message: 'Failed to upload voice resume'
+        });
+    }
+}
+
+/**
+ * Asynchronously process a voice resume
+ * This runs in the background and handles both transcription and parsing
+ */
+async function processVoiceResumeAsync(resumeId, audioFilePath, userId) {
+    try {
+        console.log(`Starting voice resume processing for ID: ${resumeId}`);
+
+        // Step 1: Transcribe the audio
+        console.log('Step 1: Transcribing audio...');
+        const transcriptionResult = await voiceTranscriptionService.transcribeAudio(audioFilePath);
+
+        if (!transcriptionResult.success) {
+            throw new Error(`Transcription failed: ${transcriptionResult.error}`);
+        }
+
+        console.log(`Transcription complete. Word count: ${transcriptionResult.wordCount}`);
+
+        // Store transcription result
+        await query(
+            `UPDATE resumes 
+             SET transcription_data = $1, 
+                 transcribed_at = NOW() 
+             WHERE id = $2 AND user_id = $3`,
+            [
+                JSON.stringify({
+                    text: transcriptionResult.text,
+                    quality: transcriptionResult.quality,
+                    wordCount: transcriptionResult.wordCount,
+                    processingTime: transcriptionResult.processingTime
+                }),
+                resumeId,
+                userId
+            ]
+        );
+
+        // Step 2: Format transcription for parsing
+        console.log('Step 2: Formatting transcription for parsing...');
+        const formatted = voiceTranscriptionService.formatTranscriptionForParsing(
+            transcriptionResult.text,
+            { resumeId, userId }
+        );
+
+        // Step 3: Create a temporary text file for the parser
+        // The existing parser expects a file path
+        const tempTextPath = path.join(
+            path.dirname(audioFilePath),
+            `transcript_${resumeId}.txt`
+        );
+        await fs.writeFile(tempTextPath, formatted.formattedText, 'utf8');
+
+        // Step 4: Run through existing resume parser
+        console.log('Step 3: Parsing transcribed text...');
+        const parseResult = await huggingFaceService.parseResume(tempTextPath);
+
+        // Clean up temporary file
+        try {
+            await fs.unlink(tempTextPath);
+        } catch (e) {
+            console.error('Error cleaning up temp file:', e);
+        }
+
+        if (parseResult.success) {
+            // Enhance parsed data with voice-specific metadata
+            const enhancedData = {
+                ...parseResult.data,
+                sourceType: 'voice',
+                transcriptionQuality: transcriptionResult.quality,
+                originalAudioDuration: formatted.metadata.duration,
+                detectedSections: formatted.detectedSections
+            };
+
+            // Update database with parsed data
+            await query(
+                `UPDATE resumes 
+                 SET parsed_data = $1, 
+                     parsed_at = NOW() 
+                 WHERE id = $2 AND user_id = $3`,
+                [
+                    JSON.stringify(enhancedData),
+                    resumeId,
+                    userId
+                ]
+            );
+
+            console.log(`✓ Voice resume ID ${resumeId} fully processed`);
+
+            // Log quality recommendations if any
+            if (transcriptionResult.quality.recommendations?.length > 0) {
+                console.log('Quality recommendations:',
+                    transcriptionResult.quality.recommendations);
+            }
+
+        } else {
+            throw new Error(`Parsing failed: ${parseResult.error}`);
+        }
+
+    } catch (error) {
+        console.error(`Error processing voice resume ID ${resumeId}:`, error);
+
+        // Store error state
+        await query(
+            `UPDATE resumes 
+             SET parsed_data = $1, 
+                 parsed_at = NOW() 
+             WHERE id = $2 AND user_id = $3`,
+            [
+                JSON.stringify({
+                    error: error.message,
+                    attempted: true,
+                    stage: 'voice_processing'
+                }),
+                resumeId,
+                userId
+            ]
+        );
+    }
+}
+
+/**
+ * Get transcription for a voice resume
+ * This allows users to see/edit the transcribed text
+ */
+async function getVoiceResumeTranscription(req, res) {
+    try {
+        const resumeId = req.params.id;
+
+        const result = await query(
+            `SELECT id, original_name, transcription_data, transcribed_at
+             FROM resumes
+             WHERE id = $1 AND user_id = $2 AND resume_type = 'voice'`,
+            [resumeId, req.user.id]
+        );
+
+        if (result.rows.length === 0) {
+            return res.status(404).json({
+                success: false,
+                message: 'Voice resume not found'
+            });
+        }
+
+        const resume = result.rows[0];
+        let transcriptionData = null;
+
+        if (resume.transcription_data) {
+            try {
+                transcriptionData = typeof resume.transcription_data === 'object'
+                    ? resume.transcription_data
+                    : JSON.parse(resume.transcription_data);
+            } catch (e) {
+                console.error('Error parsing transcription data:', e);
+            }
+        }
+
+        res.json({
+            success: true,
+            data: {
+                id: resume.id,
+                filename: resume.original_name,
+                transcribedAt: resume.transcribed_at,
+                transcription: transcriptionData
+            }
+        });
+
+    } catch (error) {
+        console.error('Error fetching transcription:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Failed to fetch transcription'
+        });
+    }
+}
+
+module.exports = {
+    uploadVoiceResume,
+    getVoiceResumeTranscription
+};
