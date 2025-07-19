@@ -1,5 +1,6 @@
 // Resume Controller with AI Parsing Integration
 // Handles all resume-related operations including upload, retrieval, deletion, and AI parsing
+
 const path = require('path');
 const fs = require('fs').promises;
 const { query } = require('../config/database');
@@ -33,6 +34,7 @@ async function uploadResume(req, res) {
 
         // Get the original filename
         const originalName = req.uploadedFileOriginalName || req.file.originalname;
+
         console.log(`Processing resume upload: ${originalName}`);
 
         // First, store the file metadata in database
@@ -80,6 +82,7 @@ async function uploadResume(req, res) {
                 parsingStatus: 'in_progress'
             }
         });
+
     } catch (error) {
         console.error('Resume upload error:', error);
 
@@ -140,6 +143,7 @@ async function parseResumeAsync(resumeId, filePath, userId) {
                 hasEducation: !!parseResult.data.education,
                 hasExperience: !!parseResult.data.experience
             });
+
         } else {
             console.error(`Failed to parse resume ID ${resumeId}:`, parseResult.error);
 
@@ -159,6 +163,7 @@ async function parseResumeAsync(resumeId, filePath, userId) {
                 userId
             ]);
         }
+
     } catch (error) {
         console.error(`Error in async resume parsing for ID ${resumeId}:`, error);
     }
@@ -167,7 +172,6 @@ async function parseResumeAsync(resumeId, filePath, userId) {
 /**
  * Get all resumes for the authenticated user
  * Now includes parsed data status and preview
- * FIXED: Handles PostgreSQL JSON column type properly
  */
 async function getUserResumes(req, res) {
     try {
@@ -189,7 +193,6 @@ async function getUserResumes(req, res) {
         const result = await query(selectQuery, [req.user.id]);
 
         // Transform the data to include parsing status
-        // This now properly handles PostgreSQL's automatic JSON parsing
         const resumesWithStatus = result.rows.map(resume => {
             let parsedPreview = null;
             let parsingStatus = 'not_started';
@@ -198,21 +201,9 @@ async function getUserResumes(req, res) {
                 parsingStatus = 'completed';
 
                 try {
-                    // CRITICAL FIX: Handle data that's already been parsed by PostgreSQL
-                    let parsedData;
+                    const parsedData = JSON.parse(resume.parsed_data);
 
-                    if (typeof resume.parsed_data === 'object' && resume.parsed_data !== null) {
-                        // Data is already an object (PostgreSQL JSON column auto-parsed it)
-                        parsedData = resume.parsed_data;
-                    } else if (typeof resume.parsed_data === 'string') {
-                        // Data is a string (shouldn't happen with JSON column, but defensive coding)
-                        parsedData = JSON.parse(resume.parsed_data);
-                    } else {
-                        // No valid data
-                        throw new Error('No valid parsed data');
-                    }
-
-                    // Check if it's an error record
+                    // Check if it's an error
                     if (parsedData.error) {
                         parsingStatus = 'failed';
                     } else {
@@ -226,7 +217,7 @@ async function getUserResumes(req, res) {
                         };
                     }
                 } catch (parseError) {
-                    console.error('Error processing parsed data:', parseError.message);
+                    console.error('Error parsing stored data:', parseError);
                     parsingStatus = 'error';
                 }
             }
@@ -249,6 +240,7 @@ async function getUserResumes(req, res) {
             count: result.rows.length,
             data: resumesWithStatus
         });
+
     } catch (error) {
         console.error('Error fetching resumes:', error);
         res.status(500).json({
@@ -261,7 +253,6 @@ async function getUserResumes(req, res) {
 /**
  * Get detailed parsed data for a specific resume
  * Returns the complete extracted information
- * FIXED: Also handles PostgreSQL JSON column type
  */
 async function getResumeParsedData(req, res) {
     try {
@@ -295,20 +286,10 @@ async function getResumeParsedData(req, res) {
 
         if (resume.parsed_data) {
             try {
-                // CRITICAL FIX: Handle both object and string data types
-                if (typeof resume.parsed_data === 'object' && resume.parsed_data !== null) {
-                    // Data is already an object
-                    parsedData = resume.parsed_data;
-                } else if (typeof resume.parsed_data === 'string') {
-                    // Data is a string, needs parsing
-                    parsedData = JSON.parse(resume.parsed_data);
-                } else {
-                    throw new Error('Invalid parsed data format');
-                }
-
+                parsedData = JSON.parse(resume.parsed_data);
                 parsingStatus = parsedData.error ? 'failed' : 'completed';
             } catch (error) {
-                console.error('Error processing parsed data:', error);
+                console.error('Error parsing stored data:', error);
                 parsingStatus = 'error';
             }
         }
@@ -323,6 +304,7 @@ async function getResumeParsedData(req, res) {
                 parsedData: parsedData
             }
         });
+
     } catch (error) {
         console.error('Error fetching resume parsed data:', error);
         res.status(500).json({
@@ -370,6 +352,7 @@ async function reparseResume(req, res) {
                 filename: resume.filename
             }
         });
+
     } catch (error) {
         console.error('Error initiating re-parse:', error);
         res.status(500).json({
@@ -422,6 +405,7 @@ async function deleteResume(req, res) {
             success: true,
             message: 'Resume and all associated data deleted successfully'
         });
+
     } catch (error) {
         console.error('Error deleting resume:', error);
         res.status(500).json({

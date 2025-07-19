@@ -1,3 +1,4 @@
+// backend/src/db/migrate.js
 // Database migration runner
 // This tool helps us manage database schema changes in a controlled way
 

@@ -1,6 +1,6 @@
-// Hugging Face Service - Enhanced with Context-Aware Question Strategies
+// Hugging Face Service
 // This service handles all interactions with Hugging Face's API for resume parsing
-// Updated to use context-aware questions for better extraction accuracy
+// Updated to use working models: deepset/roberta-base-squad2 for Q&A extraction
 
 const axios = require('axios');
 const fs = require('fs').promises;
@@ -10,104 +10,109 @@ class HuggingFaceService {
     constructor() {
         // Initialize with API key from environment
         this.apiKey = process.env.HUGGINGFACE_API_KEY;
+
+        // Base URL for Hugging Face Inference API
         this.baseURL = 'https://api-inference.huggingface.co/models/';
+
+        // Use the RoBERTa model that we confirmed is working
+        // This model is specifically trained for extracting answers from text
         this.qaModel = 'deepset/roberta-base-squad2';
+
+        // Also keep the BART model for classification if needed
         this.classificationModel = 'facebook/bart-large-mnli';
     }
 
     /**
      * Parse a resume file and extract structured information
-     * Enhanced with better extraction strategies
+     * This method reads the file, extracts text, and then uses Q&A to parse it
+     * @param {string} filePath - Path to the resume file
+     * @returns {Object} Extracted resume information
      */
     async parseResume(filePath) {
         try {
             console.log(`Starting resume parsing for file: ${filePath}`);
 
-            // Extract text from the file
+            // First, we need to extract text from the file
+            // This handles both PDF and text files
             let resumeText = '';
+
             try {
+                // Check if it's a PDF file
                 if (filePath.toLowerCase().endsWith('.pdf')) {
                     const fileBuffer = await fs.readFile(filePath);
                     const pdfData = await pdf(fileBuffer);
                     resumeText = pdfData.text;
                 } else {
+                    // For text files (txt, doc, etc.), read directly
                     resumeText = await fs.readFile(filePath, 'utf8');
                 }
             } catch (readError) {
                 console.error('Error reading file:', readError);
+                // If PDF parsing fails, try reading as text
                 resumeText = await fs.readFile(filePath, 'utf8');
             }
 
-            // Clean up the text
+            // Clean up the text to make it easier for the model to process
+            // Remove excessive whitespace and normalize line breaks
             resumeText = resumeText.replace(/\s+/g, ' ').trim();
+
             console.log(`Extracted text length: ${resumeText.length} characters`);
 
-            // ENHANCED: First, try to identify the candidate's section
-            // Most resumes start with the candidate's information
-            const firstSection = this.extractFirstSection(resumeText);
-            console.log('Analyzing first section of resume for primary candidate info...');
-
-            // ENHANCED: Define context-aware questions
-            // These questions are designed to specifically target the resume owner's information
+            // Define the questions we want to ask about the resume
+            // Each question is carefully crafted to extract specific information
             const questions = [
                 {
-                    question: "What is the name at the very beginning of this resume?",
+                    question: "What is the person's full name?",
                     key: 'name',
-                    fallbackQuestion: "Whose resume is this?",
-                    context: firstSection // Use first section for name extraction
+                    fallbackQuestion: "Who is this resume about?"
                 },
                 {
-                    question: "What is the first email address mentioned in this resume?",
+                    question: "What is the email address?",
                     key: 'email',
-                    fallbackQuestion: "What email address appears near the name at the top?",
-                    context: firstSection // Use first section for email
+                    fallbackQuestion: "What is the contact email?"
                 },
                 {
-                    question: "What is the first phone number listed in this resume?",
+                    question: "What is the phone number?",
                     key: 'phone',
-                    fallbackQuestion: "What phone number appears in the contact information?",
-                    context: firstSection // Use first section for phone
+                    fallbackQuestion: "What is the contact number?"
                 },
                 {
                     question: "What programming languages and technical skills are mentioned?",
                     key: 'skills',
-                    fallbackQuestion: "What are the technical skills?",
-                    context: resumeText // Use full text for skills
+                    fallbackQuestion: "What are the technical skills?"
                 },
                 {
                     question: "What is the most recent job title and company?",
                     key: 'currentJob',
-                    fallbackQuestion: "What is their current position?",
-                    context: resumeText // Use full text for job info
+                    fallbackQuestion: "What is their current position?"
                 },
                 {
                     question: "What is the highest education degree and institution?",
                     key: 'education',
-                    fallbackQuestion: "What education is listed?",
-                    context: resumeText // Use full text for education
+                    fallbackQuestion: "What education is listed?"
                 },
                 {
                     question: "How many years of experience are mentioned?",
                     key: 'experience',
-                    fallbackQuestion: "What is the work experience?",
-                    context: resumeText // Use full text for experience
+                    fallbackQuestion: "What is the work experience?"
                 }
             ];
 
             // Store all extracted information
             const extractedInfo = {};
 
-            // Process each question with the appropriate context
-            for (const { question, key, fallbackQuestion, context } of questions) {
+            // Process each question using the Q&A model
+            // We'll try the main question first, then the fallback if needed
+            for (const { question, key, fallbackQuestion } of questions) {
                 try {
                     console.log(`Extracting: ${key}`);
 
-                    // Use the specific context for each question
-                    let answer = await this.extractWithQA(context, question);
+                    // Try the main question first
+                    let answer = await this.extractWithQA(resumeText, question);
 
-                    // If we didn't get a good answer, try the fallback
+                    // If we didn't get a good answer, try the fallback question
                     if (!answer || answer.length < 2) {
-                        answer = await this.extractWithQA(context, fallbackQuestion);
+                        answer = await this.extractWithQA(resumeText, fallbackQuestion);
                     }
 
                     if (answer) {
@@ -118,18 +123,20 @@ class HuggingFaceService {
                     console.error(`Error extracting ${key}:`, error.message);
                 }
 
-                // Add delay to avoid rate limiting
+                // Add a small delay between API calls to avoid rate limiting
                 await new Promise(resolve => setTimeout(resolve, 500));
             }
 
-            // ENHANCED: Apply additional validation and cleaning
-            const processedInfo = this.enhancedPostProcessing(extractedInfo, resumeText);
+            // Post-process the extracted information
+            // This cleans up the data and structures it better
+            const processedInfo = this.postProcessExtractedInfo(extractedInfo);
 
             return {
                 success: true,
                 data: processedInfo,
-                rawText: resumeText.substring(0, 1000)
+                rawText: resumeText.substring(0, 1000) // Include first 1000 chars for reference
             };
+
         } catch (error) {
             console.error('Resume parsing error:', error);
             return {
@@ -140,33 +147,11 @@ class HuggingFaceService {
     }
 
     /**
-     * Extract the first section of the resume
-     * This typically contains the candidate's personal information
-     */
-    extractFirstSection(resumeText) {
-        // Most resumes have contact info in the first 500-800 characters
-        // We'll look for common section breaks
-        const sectionBreakers = [
-            'experience', 'education', 'skills', 'summary', 'objective',
-            'professional', 'work history', 'employment', 'projects'
-        ];
-
-        let firstSectionEnd = 800; // Default to first 800 characters
-
-        // Find the earliest section break
-        for (const breaker of sectionBreakers) {
-            const breakerIndex = resumeText.toLowerCase().indexOf(breaker);
-            if (breakerIndex > 100 && breakerIndex < firstSectionEnd) {
-                firstSectionEnd = breakerIndex;
-            }
-        }
-
-        return resumeText.substring(0, firstSectionEnd);
-    }
-
-    /**
      * Extract information using the Question-Answering model
-     * (Same as before, no changes needed here)
+     * This is the core method that communicates with Hugging Face
+     * @param {string} context - The text to search within
+     * @param {string} question - The question to answer
+     * @returns {string|null} The extracted answer
      */
     async extractWithQA(context, question) {
         try {
@@ -187,14 +172,21 @@ class HuggingFaceService {
                 }
             );
 
+            // The model returns an answer with a confidence score
+            // We only use answers with reasonable confidence
             if (response.data && response.data.answer && response.data.score > 0.01) {
                 return response.data.answer;
             }
+
             return null;
+
         } catch (error) {
             if (error.response && error.response.status === 503) {
+                // Model is loading, wait and retry once
                 console.log('Model is loading, waiting 5 seconds...');
                 await new Promise(resolve => setTimeout(resolve, 5000));
+
+                // Retry once
                 try {
                     const retryResponse = await axios.post(
                         `${this.baseURL}${this.qaModel}`,
@@ -212,6 +204,7 @@ class HuggingFaceService {
                             timeout: 30000
                         }
                     );
+
                     if (retryResponse.data && retryResponse.data.answer) {
                         return retryResponse.data.answer;
                     }
@@ -219,65 +212,42 @@ class HuggingFaceService {
                     console.error('Retry failed:', retryError.message);
                 }
             }
+
             throw error;
         }
     }
 
     /**
-     * Enhanced post-processing with validation
-     * This ensures we're getting the candidate's information, not references
+     * Post-process extracted information to clean and structure it
+     * This method improves the quality of the extracted data
+     * @param {Object} rawInfo - The raw extracted information
+     * @returns {Object} Cleaned and structured information
      */
-    enhancedPostProcessing(rawInfo, fullText) {
+    postProcessExtractedInfo(rawInfo) {
         const processed = {};
 
-        // Clean up name - remove titles and validate it's at the beginning
+        // Clean up name - remove titles and extra words
         if (rawInfo.name) {
-            let cleanName = rawInfo.name
+            processed.name = rawInfo.name
                 .replace(/^(Mr\.|Mrs\.|Ms\.|Dr\.|Prof\.)\s*/i, '')
                 .trim();
-
-            // Verify this name appears in the first 200 characters
-            // This helps ensure it's the candidate's name, not a reference
-            const firstPart = fullText.substring(0, 200).toLowerCase();
-            if (firstPart.includes(cleanName.toLowerCase().split(' ')[0])) {
-                processed.name = cleanName;
-            } else {
-                console.log('Name validation failed - might be from references section');
-                processed.name = cleanName; // Still use it, but log the issue
-            }
         }
 
-        // Enhanced email validation
+        // Validate and clean email
         if (rawInfo.email) {
-            // First, try to extract a properly formatted email
             const emailMatch = rawInfo.email.match(/[\w.-]+@[\w.-]+\.\w+/);
-            if (emailMatch) {
-                const extractedEmail = emailMatch[0].toLowerCase();
-
-                // Check if this email appears early in the document
-                // Candidate emails are usually in the first 300 characters
-                const emailPosition = fullText.toLowerCase().indexOf(extractedEmail);
-                if (emailPosition > -1 && emailPosition < 500) {
-                    processed.email = extractedEmail;
-                } else {
-                    // Email found but it's far from the beginning
-                    // Might be a reference's email
-                    console.log(`Email found at position ${emailPosition} - might not be candidate's`);
-                    processed.email = extractedEmail;
-                }
-            } else {
-                processed.email = rawInfo.email;
-            }
+            processed.email = emailMatch ? emailMatch[0].toLowerCase() : rawInfo.email;
         }
 
-        // Clean phone number
+        // Clean phone number - extract digits
         if (rawInfo.phone) {
             const phoneDigits = rawInfo.phone.replace(/\D/g, '');
             processed.phone = phoneDigits.length >= 10 ? phoneDigits : rawInfo.phone;
         }
 
-        // Process skills
+        // Process skills - try to split into array
         if (rawInfo.skills) {
+            // Split by common delimiters
             const skillArray = rawInfo.skills
                 .split(/[,;]/)
                 .map(skill => skill.trim())
@@ -292,38 +262,18 @@ class HuggingFaceService {
             }
         });
 
+        // Add extraction timestamp
         processed.extractedAt = new Date().toISOString();
-
-        // Add extraction confidence indicator
-        processed.extractionConfidence = this.calculateConfidence(processed);
 
         return processed;
     }
 
     /**
-     * Calculate confidence score for the extraction
-     * This helps identify when extraction might be unreliable
-     */
-    calculateConfidence(extractedData) {
-        let confidence = 'high';
-
-        // Check if we have the basic fields
-        const hasName = !!extractedData.name;
-        const hasEmail = !!extractedData.email && extractedData.email.includes('@');
-        const hasContactInfo = hasName || hasEmail || !!extractedData.phone;
-
-        if (!hasContactInfo) {
-            confidence = 'low';
-        } else if (!hasName || !hasEmail) {
-            confidence = 'medium';
-        }
-
-        return confidence;
-    }
-
-    /**
      * Alternative method to classify resume sections
-     * (Same as before, no changes needed)
+     * This can be used to identify what type of content is in each part
+     * @param {string} text - Text to classify
+     * @param {Array<string>} labels - Possible categories
+     * @returns {Object} Classification results
      */
     async classifyText(text, labels) {
         try {
@@ -342,7 +292,9 @@ class HuggingFaceService {
                     }
                 }
             );
+
             return response.data;
+
         } catch (error) {
             console.error('Classification error:', error.message);
             return null;
