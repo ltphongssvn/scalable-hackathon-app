@@ -1,36 +1,36 @@
-// Resume Routes
-// Defines all API endpoints related to resume operations
+// Enhanced Resume Routes with Progress Tracking
+// This file replaces the original resumeRoutes.js to add real-time progress tracking
+// while maintaining backward compatibility with existing API contracts
 
 const express = require('express');
 const router = express.Router();
 const { authenticate } = require('../middleware/auth');
 const { upload } = require('../config/upload');
-const resumeController = require('../controllers/resumeController');
 
-// All resume routes require authentication
-// This ensures only logged-in users can upload, view, or delete resumes
+// CRITICAL: We're now using the enhanced controller
+// This is the key change that enables progress tracking
+const resumeController = require('../controllers/resumeController.enhanced');
 
 /**
- * POST /api/v1/resume/upload
- * Upload a new resume
- * 
- * The upload.single('resume') middleware:
- * 1. Looks for a file in the 'resume' field of the multipart request
- * 2. Validates the file type and size
- * 3. Saves the file to disk
- * 4. Adds file info to req.file
- * 5. Passes control to the controller
+ * POST /api/v1/resumes/upload
+ * Upload a new resume with real-time progress tracking
+ *
+ * What's different from the original:
+ * - The controller now returns an uploadId in the response
+ * - This uploadId can be used to subscribe to progress updates
+ * - The API contract remains the same for backward compatibility
  */
 router.post(
     '/upload',
-    authenticate,                    // First, verify the user is logged in
-    upload.single('resume'),         // Then, handle the file upload
-    resumeController.uploadResume    // Finally, process the upload
+    authenticate,
+    upload.single('resume'),
+    resumeController.uploadResume
 );
 
 /**
- * GET /api/v1/resume
+ * GET /api/v1/resumes
  * Get all resumes for the authenticated user
+ * (Unchanged - using the same implementation)
  */
 router.get(
     '/',
@@ -39,12 +39,9 @@ router.get(
 );
 
 /**
- * GET /api/v1/resume/:id/parsed
+ * GET /api/v1/resumes/:id/parsed
  * Get detailed parsed data for a specific resume
- * 
- * This endpoint returns the AI-extracted information from a resume,
- * including name, email, skills, experience, and education.
- * It's useful for displaying the full parsed details on a resume detail page.
+ * (Unchanged - using the same implementation)
  */
 router.get(
     '/:id/parsed',
@@ -53,12 +50,9 @@ router.get(
 );
 
 /**
- * POST /api/v1/resume/:id/reparse
+ * POST /api/v1/resumes/:id/reparse
  * Trigger re-parsing of a resume
- * 
- * This endpoint allows users to re-run the AI parsing on a resume.
- * Useful if the initial parsing failed or if parsing logic has been improved.
- * The parsing happens asynchronously, so this returns immediately.
+ * (Unchanged - using the same implementation)
  */
 router.post(
     '/:id/reparse',
@@ -67,8 +61,9 @@ router.post(
 );
 
 /**
- * DELETE /api/v1/resume/:id
+ * DELETE /api/v1/resumes/:id
  * Delete a specific resume
+ * (Unchanged - using the same implementation)
  */
 router.delete(
     '/:id',
