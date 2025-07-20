@@ -1,0 +1,74 @@
+// Enhanced Resume Routes with Progress Tracking
+// This file replaces the original resumeRoutes.js to add real-time progress tracking
+// while maintaining backward compatibility with existing API contracts
+
+const express = require('express');
+const router = express.Router();
+const { authenticate } = require('../middleware/auth');
+const { upload } = require('../config/upload');
+
+// CRITICAL: We're now using the enhanced controller
+// This is the key change that enables progress tracking
+const resumeController = require('../controllers/resumeController.enhanced');
+
+/**
+ * POST /api/v1/resumes/upload
+ * Upload a new resume with real-time progress tracking
+ * 
+ * What's different from the original:
+ * - The controller now returns an uploadId in the response
+ * - This uploadId can be used to subscribe to progress updates
+ * - The API contract remains the same for backward compatibility
+ */
+router.post(
+    '/upload',
+    authenticate,
+    upload.single('resume'),
+    resumeController.uploadResume
+);
+
+/**
+ * GET /api/v1/resumes
+ * Get all resumes for the authenticated user
+ * (Unchanged - using the same implementation)
+ */
+router.get(
+    '/',
+    authenticate,
+    resumeController.getUserResumes
+);
+
+/**
+ * GET /api/v1/resumes/:id/parsed
+ * Get detailed parsed data for a specific resume
+ * (Unchanged - using the same implementation)
+ */
+router.get(
+    '/:id/parsed',
+    authenticate,
+    resumeController.getResumeParsedData
+);
+
+/**
+ * POST /api/v1/resumes/:id/reparse
+ * Trigger re-parsing of a resume
+ * (Unchanged - using the same implementation)
+ */
+router.post(
+    '/:id/reparse',
+    authenticate,
+    resumeController.reparseResume
+);
+
+/**
+ * DELETE /api/v1/resumes/:id
+ * Delete a specific resume
+ * (Unchanged - using the same implementation)
+ */
+router.delete(
+    '/:id',
+    authenticate,
+    resumeController.deleteResume
+);
+
+module.exports = router;
