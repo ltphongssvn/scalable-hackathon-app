@@ -1,0 +1,38 @@
+const express = require('express');
+const router = express.Router();
+const huggingFaceResumeService = require('../services/huggingFaceResumeService');
+
+// Temporary test endpoint to verify enhancement service integration
+router.get('/test-enhancement', async (req, res) => {
+    try {
+        // Test with sample resume data
+        const sampleData = {
+            name: "John Doe",
+            email: "john@example.com",
+            skills: ["JavaScript", "Node.js", "React", "PostgreSQL", "Team Leadership"],
+            experience: "5 years of full-stack development experience"
+        };
+        
+        console.log('Testing enhancement service with sample data...');
+        const result = await huggingFaceResumeService.enhanceResumeData(sampleData);
+        
+        res.json({
+            success: true,
+            message: 'Enhancement service is properly integrated!',
+            enhancementWorking: result.success,
+            sampleEnhancement: result.success ? {
+                categorizedSkills: result.data.categorizedSkills,
+                experienceLevel: result.data.experienceLevel,
+                completenessScore: result.data.completenessScore
+            } : null
+        });
+    } catch (error) {
+        res.json({
+            success: false,
+            message: 'Enhancement service test failed',
+            error: error.message
+        });
+    }
+});
+
+module.exports = router;

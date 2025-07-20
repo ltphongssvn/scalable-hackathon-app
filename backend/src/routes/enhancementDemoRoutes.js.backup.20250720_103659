@@ -1,0 +1,101 @@
+const express = require('express');
+const router = express.Router();
+const huggingFaceResumeService = require('../services/huggingFaceResumeService');
+
+// Temporary test endpoint to verify enhancement service integration
+router.get('/test-enhancement', async (req, res) => {
+    try {
+        // Sample structured data (what your parser extracts)
+        const sampleParsedData = {
+            name: "John Doe",
+            email: "john.doe@example.com",
+            phone: "+1-234-567-8900",
+            skills: ["JavaScript", "Node.js", "React", "PostgreSQL", "Team Leadership", "Agile"],
+            experience: "5 years of full-stack development experience",
+            education: "Bachelor of Science in Computer Science, Stanford University, 2018"
+        };
+
+        // Sample transcription text (what would come from voice transcription)
+        // This simulates what the voice transcription service would provide
+        const sampleTranscriptionText = `
+            My name is John Doe, and I'm a full-stack developer with 5 years of experience.
+            
+            I can be reached at john.doe@example.com or by phone at 234-567-8900.
+            
+            I graduated from Stanford University in 2018 with a Bachelor of Science in Computer Science.
+            
+            Throughout my career, I've worked extensively with JavaScript, particularly with 
+            Node.js for backend development and React for frontend applications. I have strong 
+            experience with PostgreSQL for database management and have implemented several 
+            microservices architectures.
+            
+            In my current role as a Senior Developer at Tech Corp, I lead a team of 5 developers
+            where we practice Agile methodologies. I've been responsible for designing and 
+            implementing RESTful APIs, optimizing database queries, and mentoring junior developers.
+            
+            My previous experience includes working at StartupXYZ where I helped scale their 
+            platform from 1,000 to 100,000 users, and at Digital Agency where I worked on 
+            various client projects using modern web technologies.
+            
+            I'm passionate about clean code, test-driven development, and continuous learning.
+            I regularly contribute to open-source projects and stay updated with the latest 
+            technology trends in web development.
+        `;
+
+        console.log('Testing enhancement service with sample data...');
+
+        // Call the enhancement service with BOTH parameters
+        const result = await huggingFaceResumeService.enhanceResumeData(
+            sampleParsedData,
+            sampleTranscriptionText
+        );
+
+        // Check if enhancement was successful
+        const enhancementSuccessful = result.huggingFaceEnhancement &&
+            !result.huggingFaceEnhancement.error;
+
+        res.json({
+            success: true,
+            message: 'Enhancement service test completed!',
+            enhancementWorking: enhancementSuccessful,
+            sampleEnhancement: enhancementSuccessful ? {
+                // Original data preserved
+                originalData: {
+                    name: result.name,
+                    email: result.email,
+                    skills: result.skills
+                },
+                // AI enhancements
+                enhancements: {
+                    experienceLevel: result.experienceLevel,
+                    experienceLevelConfidence: result.experienceLevelConfidence,
+                    skillsByCategory: result.skillsByCategory,
+                    suggestedSkills: result.suggestedSkills,
+                    detectedOrganizations: result.detectedOrganizations,
+                    completenessScore: result.completenessScore,
+                    improvementSuggestions: result.improvementSuggestions
+                },
+                // Processing metadata
+                metadata: {
+                    processedAt: result.huggingFaceEnhancement.processedAt,
+                    entitiesFound: result.huggingFaceEnhancement.entities ? {
+                        persons: result.huggingFaceEnhancement.entities.persons.length,
+                        organizations: result.huggingFaceEnhancement.entities.organizations.length,
+                        locations: result.huggingFaceEnhancement.entities.locations.length
+                    } : null
+                }
+            } : {
+                error: result.huggingFaceEnhancement?.error || 'Enhancement failed'
+            }
+        });
+    } catch (error) {
+        console.error('Test endpoint error:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Enhancement service test failed',
+            error: error.message
+        });
+    }
+});
+
+module.exports = router;

@@ -6,7 +6,6 @@ const fs = require('fs').promises;
 const { query } = require('../config/database');
 const voiceTranscriptionService = require('../services/ai/voiceTranscriptionService');
 const huggingFaceService = require('../services/ai/huggingfaceService');
-const huggingFaceResumeService = require('../services/huggingFaceResumeService');
 
 /**
  * Upload and process a voice resume
@@ -14,8 +13,7 @@ const huggingFaceResumeService = require('../services/huggingFaceResumeService')
  * 1. Audio file upload (handled by multer)
  * 2. Voice transcription using Whisper
  * 3. Text processing through existing resume parser
- * 4. Enhancement with AI-powered insights
- * 5. Storage of results
+ * 4. Storage of results
  */
 async function uploadVoiceResume(req, res) {
     try {
@@ -103,7 +101,7 @@ async function uploadVoiceResume(req, res) {
 
 /**
  * Asynchronously process a voice resume
- * This runs in the background and handles transcription, parsing, and enhancement
+ * This runs in the background and handles both transcription and parsing
  */
 async function processVoiceResumeAsync(resumeId, audioFilePath, userId) {
     try {
@@ -164,89 +162,34 @@ async function processVoiceResumeAsync(resumeId, audioFilePath, userId) {
         }
 
         if (parseResult.success) {
-            // Step 5: Enhance the parsed data with AI-powered insights
-            console.log('Step 4: Enhancing parsed data with AI insights...');
-
-            let enhancedParsedData = parseResult.data;
-
-            try {
-                // Call the enhancement service to add categorization, skill analysis, etc.
-                const enhancementResult = await huggingFaceResumeService.enhanceResumeData(parseResult.data);
-
-                if (enhancementResult.success) {
-                    console.log('✓ Enhancement successful:', {
-                        skillsCategorized: enhancementResult.data.categorizedSkills ?
-                            Object.keys(enhancementResult.data.categorizedSkills).length : 0,
-                        experienceLevel: enhancementResult.data.experienceLevel,
-                        completenessScore: enhancementResult.data.completenessScore
-                    });
-
-                    // Merge enhanced data with original parsed data
-                    enhancedParsedData = {
-                        ...parseResult.data,
-                        ...enhancementResult.data,
-                        enhanced: true,
-                        enhancementTimestamp: new Date().toISOString()
-                    };
-                } else {
-                    console.warn('Enhancement failed, continuing with basic parsed data:',
-                        enhancementResult.error);
-                    // Continue with original parsed data if enhancement fails
-                    enhancedParsedData = {
-                        ...parseResult.data,
-                        enhanced: false,
-                        enhancementError: enhancementResult.error
-                    };
-                }
-            } catch (enhancementError) {
-                console.error('Enhancement service error:', enhancementError);
-                // Continue with original parsed data if enhancement throws an error
-                enhancedParsedData = {
-                    ...parseResult.data,
-                    enhanced: false,
-                    enhancementError: enhancementError.message
-                };
-            }
-
-            // Create final enhanced data with voice-specific metadata
-            const finalEnhancedData = {
-                ...enhancedParsedData,
+            // Enhance parsed data with voice-specific metadata
+            const enhancedData = {
+                ...parseResult.data,
                 sourceType: 'voice',
                 transcriptionQuality: transcriptionResult.quality,
-                originalAudioDuration: formatted.metadata?.duration,
-                detectedSections: formatted.detectedSections,
-                processingSteps: {
-                    transcribed: true,
-                    parsed: true,
-                    enhanced: enhancedParsedData.enhanced || false
-                }
+                originalAudioDuration: formatted.metadata.duration,
+                detectedSections: formatted.detectedSections
             };
 
-            // Update database with enhanced parsed data
+            // Update database with parsed data
             await query(
                 `UPDATE resumes 
                  SET parsed_data = $1, 
                      parsed_at = NOW() 
                  WHERE id = $2 AND user_id = $3`,
                 [
-                    JSON.stringify(finalEnhancedData),
+                    JSON.stringify(enhancedData),
                     resumeId,
                     userId
                 ]
             );
 
-            console.log(`✓ Voice resume ID ${resumeId} fully processed with enhancement`);
+            console.log(`✓ Voice resume ID ${resumeId} fully processed`);
 
             // Log quality recommendations if any
             if (transcriptionResult.quality.recommendations?.length > 0) {
                 console.log('Quality recommendations:',
                     transcriptionResult.quality.recommendations);
-            }
-
-            // Log enhancement suggestions if any
-            if (finalEnhancedData.improvementSuggestions?.length > 0) {
-                console.log('Resume improvement suggestions:',
-                    finalEnhancedData.improvementSuggestions);
             }
 
         } else {
