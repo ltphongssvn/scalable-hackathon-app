@@ -1,55 +1,31 @@
-// Voice Transcription Service using OpenAI's Whisper API
+// Voice Transcription Service using Whisper
 // This service handles converting audio files (voice resumes) into text
-// Updated to use OpenAI's official Whisper API for reliable transcription
+// Uses Whisper model through Hugging Face for consistency with existing architecture
 
 const axios = require('axios');
 const fs = require('fs').promises;
 const FormData = require('form-data');
-const path = require('path');
 
 class VoiceTranscriptionService {
     constructor() {
-        // Initialize the API key - will be retrieved when needed
-        // This prevents timing issues with environment variable loading
-        this.apiKey = null;
+        // Use the same Hugging Face API key
+        this.apiKey = process.env.HUGGINGFACE_API_KEY;
 
-        // OpenAI's Whisper API endpoint
-        // This is the official, reliable endpoint for audio transcription
-        this.baseURL = 'https://api.openai.com/v1/audio/transcriptions';
+        // Whisper models available on Hugging Face
+        // We'll use the small model for a good balance of speed and accuracy
+        // Options: openai/whisper-tiny, openai/whisper-small, openai/whisper-medium, openai/whisper-large
+        this.whisperModel = 'openai/whisper-small';
 
-        // Whisper model to use - 'whisper-1' is the current model
-        this.model = 'whisper-1';
+        // Base URL for Hugging Face inference API
+        this.baseURL = `https://api-inference.huggingface.co/models/${this.whisperModel}`;
 
-        // Supported audio formats by OpenAI's Whisper
-        // These formats are officially supported and tested
-        this.supportedFormats = ['.mp3', '.mp4', '.mpeg', '.mpga', '.m4a', '.wav', '.webm'];
-
-        // OpenAI has a 25MB file size limit for audio files
-        this.maxFileSize = 25 * 1024 * 1024; // 25MB limit
+        // Supported audio formats
+        this.supportedFormats = ['.mp3', '.wav', '.m4a', '.ogg', '.webm'];
+        this.maxFileSize = 25 * 1024 * 1024; // 25MB limit for audio files
     }
 
     /**
-     * Get the API key, ensuring it's loaded from environment if not already cached
-     * This method handles the timing issue where env vars might not be loaded when the service is instantiated
-     * @returns {string} The OpenAI API key
-     */
-    getApiKey() {
-        // If we don't have the API key cached, try to get it from environment
-        if (!this.apiKey) {
-            // First try OpenAI key, then fall back to Hugging Face key if needed
-            this.apiKey = process.env.OPENAI_API_KEY || process.env.HUGGINGFACE_API_KEY;
-
-            // Log warning if still no API key (helps with debugging)
-            if (!this.apiKey) {
-                console.error('WARNING: No API key found. Please set OPENAI_API_KEY in your .env file');
-            }
-        }
-
-        return this.apiKey;
-    }
-
-    /**
-     * Transcribe an audio file to text using OpenAI's Whisper API
+     * Transcribe an audio file to text
      * This is the main entry point for voice resume processing
      * @param {string} audioFilePath - Path to the audio file
      * @returns {Object} Transcription result with text and metadata
@@ -57,17 +33,6 @@ class VoiceTranscriptionService {
     async transcribeAudio(audioFilePath) {
         try {
             console.log(`Starting voice transcription for file: ${audioFilePath}`);
-
-            // Get the API key when we actually need it
-            const apiKey = this.getApiKey();
-
-            // Check if we have an API key before proceeding
-            if (!apiKey) {
-                throw new Error('API key not configured. Please add OPENAI_API_KEY to your .env file');
-            }
-
-            // Debug log to confirm API key is present (shows first 10 chars only for security)
-            console.log(`API Key status: Present (${apiKey.substring(0, 10)}...)`);
 
             // First, validate the audio file
             const validation = await this.validateAudioFile(audioFilePath);
@@ -79,38 +44,19 @@ class VoiceTranscriptionService {
             const audioBuffer = await fs.readFile(audioFilePath);
             console.log(`Audio file size: ${(audioBuffer.length / 1024 / 1024).toFixed(2)} MB`);
 
-            // Create form data for multipart upload
-            // OpenAI's API expects multipart/form-data with the audio file
-            const formData = new FormData();
-
-            // Add the audio file to the form
-            // We need to provide the buffer, filename, and content type
-            const fileName = path.basename(audioFilePath);
-            formData.append('file', audioBuffer, {
-                filename: fileName,
-                contentType: this.getContentType(fileName)
-            });
-
-            // Add the model parameter
-            formData.append('model', this.model);
-
-            // Optional: Add prompt to help with resume-specific terminology
-            formData.append('prompt', 'This is a voice resume. Please transcribe accurately, including technical terms, company names, and personal information.');
-
-            // Optional: Set response format to verbose JSON for more details
-            formData.append('response_format', 'json');
-
+            // Prepare the request to Hugging Face
+            // Whisper expects audio data in binary format
             const startTime = Date.now();
 
             try {
-                // Make the transcription request to OpenAI
+                // Make the transcription request
                 const response = await axios.post(
                     this.baseURL,
-                    formData,
+                    audioBuffer,
                     {
                         headers: {
-                            ...formData.getHeaders(),
-                            'Authorization': `Bearer ${apiKey}`,
+                            'Authorization': `Bearer ${this.apiKey}`,
+                            'Content-Type': 'audio/wav', // Hugging Face will handle format detection
                         },
                         maxContentLength: Infinity,
                         maxBodyLength: Infinity,
@@ -132,60 +78,50 @@ class VoiceTranscriptionService {
                     text: transcribedText,
                     processingTime: transcriptionTime,
                     quality: quality,
-                    wordCount: transcribedText.split(/\s+/).filter(word => word.length > 0).length,
+                    wordCount: transcribedText.split(/\s+/).length,
                     characterCount: transcribedText.length
                 };
 
             } catch (apiError) {
                 // Handle specific API errors
-                if (apiError.response) {
-                    console.error('API Error Response:', {
-                        status: apiError.response.status,
-                        statusText: apiError.response.statusText,
-                        data: apiError.response.data
-                    });
+                if (apiError.response && apiError.response.status === 503) {
+                    console.log('Whisper model is loading, waiting and retrying...');
+                    await new Promise(resolve => setTimeout(resolve, 20000)); // Wait 20 seconds
 
-                    // Provide user-friendly error messages
-                    if (apiError.response.status === 401) {
-                        throw new Error('Invalid API key. Please check your OPENAI_API_KEY.');
-                    } else if (apiError.response.status === 429) {
-                        throw new Error('Rate limit exceeded. Please try again later.');
-                    } else if (apiError.response.status === 413) {
-                        throw new Error('Audio file too large. Maximum size is 25MB.');
-                    }
+                    // Retry once
+                    const retryResponse = await axios.post(
+                        this.baseURL,
+                        audioBuffer,
+                        {
+                            headers: {
+                                'Authorization': `Bearer ${this.apiKey}`,
+                                'Content-Type': 'audio/wav',
+                            },
+                            timeout: 120000
+                        }
+                    );
+
+                    const transcribedText = this.processTranscriptionResponse(retryResponse.data);
+                    return {
+                        success: true,
+                        text: transcribedText,
+                        processingTime: Date.now() - startTime,
+                        quality: this.assessTranscriptionQuality(transcribedText),
+                        wordCount: transcribedText.split(/\s+/).length,
+                        characterCount: transcribedText.length
+                    };
                 }
-
                 throw apiError;
             }
 
         } catch (error) {
             console.error('Voice transcription error:', error);
-
             return {
                 success: false,
                 error: error.message,
                 details: error.response?.data || 'No additional details available'
             };
         }
-    }
-
-    /**
-     * Get the appropriate content type for an audio file
-     * This helps the API understand the format of the uploaded file
-     */
-    getContentType(fileName) {
-        const ext = path.extname(fileName).toLowerCase();
-        const contentTypes = {
-            '.mp3': 'audio/mpeg',
-            '.mp4': 'audio/mp4',
-            '.mpeg': 'audio/mpeg',
-            '.mpga': 'audio/mpeg',
-            '.m4a': 'audio/m4a',
-            '.wav': 'audio/wav',
-            '.webm': 'audio/webm'
-        };
-
-        return contentTypes[ext] || 'audio/mpeg';
     }
 
     /**
@@ -226,27 +162,25 @@ class VoiceTranscriptionService {
     }
 
     /**
-     * Process the transcription response from OpenAI
-     * OpenAI returns a JSON object with the transcribed text
+     * Process the transcription response from Hugging Face
+     * Different Whisper models might return data in slightly different formats
      */
     processTranscriptionResponse(responseData) {
-        // OpenAI returns an object with a 'text' field
+        // Hugging Face Whisper models typically return an object with a 'text' field
         if (typeof responseData === 'object' && responseData.text) {
             return responseData.text.trim();
         }
 
-        // If response_format was set to 'json', we might get more detailed data
-        if (typeof responseData === 'object' && responseData.segments) {
-            // Join all segments into one text
-            return responseData.segments
-                .map(segment => segment.text)
-                .join(' ')
-                .trim();
-        }
-
-        // Handle unexpected formats
+        // Sometimes the response might be a direct string
         if (typeof responseData === 'string') {
             return responseData.trim();
+        }
+
+        // Handle array responses (some models return segments)
+        if (Array.isArray(responseData)) {
+            return responseData.map(segment =>
+                segment.text || segment
+            ).join(' ').trim();
         }
 
         throw new Error('Unexpected transcription response format');
@@ -259,11 +193,11 @@ class VoiceTranscriptionService {
     assessTranscriptionQuality(text) {
         const indicators = {
             length: text.length,
-            wordCount: text.split(/\s+/).filter(word => word.length > 0).length,
+            wordCount: text.split(/\s+/).length,
             hasEmail: /[\w.-]+@[\w.-]+\.\w+/.test(text),
             hasPhone: /\d{3}[-.\s]?\d{3}[-.\s]?\d{4}/.test(text),
-            sentenceCount: text.split(/[.!?]+/).filter(s => s.trim().length > 0).length,
-            avgWordLength: text.length / Math.max(1, text.split(/\s+/).filter(word => word.length > 0).length)
+            sentenceCount: text.split(/[.!?]+/).length - 1,
+            avgWordLength: text.length / text.split(/\s+/).length
         };
 
         // Quality assessment logic
@@ -313,10 +247,6 @@ class VoiceTranscriptionService {
             recommendations.push('Consider including your phone number');
         }
 
-        if (indicators.sentenceCount < 5) {
-            recommendations.push('Try to speak in complete sentences for better clarity');
-        }
-
         return recommendations;
     }
 
@@ -358,10 +288,10 @@ class VoiceTranscriptionService {
         return {
             originalTranscription: transcribedText,
             formattedText: formattedText,
-            detectedSections: Object.keys(sections).filter(key => sections[key] !== null),
+            detectedSections: Object.keys(sections),
             metadata: {
                 ...metadata,
-                transcriptionMethod: 'whisper-openai',
+                transcriptionMethod: 'whisper',
                 isVoiceResume: true
             }
         };
@@ -398,64 +328,44 @@ class VoiceTranscriptionService {
         const experienceKeywords = [
             'worked at', 'working at', 'currently work',
             'experience includes', 'my experience',
-            'previous role', 'current role', 'position',
-            'job', 'employment', 'company'
+            'previous role', 'current role', 'position'
         ];
 
-        sections.experience = this.extractSectionByKeywords(text, experienceKeywords, 150);
+        sections.experience = this.extractSectionByKeywords(text, experienceKeywords);
 
         // Look for education mentions
         const educationKeywords = [
             'studied at', 'graduated from', 'degree in',
             'university', 'college', 'education',
-            'bachelor', 'master', 'phd', 'certification',
-            'school', 'major', 'minor'
+            'bachelor', 'master', 'phd', 'certification'
         ];
 
-        sections.education = this.extractSectionByKeywords(text, educationKeywords, 100);
+        sections.education = this.extractSectionByKeywords(text, educationKeywords);
 
         // Look for skills mentions
         const skillsKeywords = [
             'skills include', 'proficient in', 'experienced with',
-            'technologies', 'programming languages', 'familiar with',
-            'expertise', 'knowledge of', 'certified in'
+            'technologies', 'programming languages', 'familiar with'
         ];
 
-        sections.skills = this.extractSectionByKeywords(text, skillsKeywords, 100);
+        sections.skills = this.extractSectionByKeywords(text, skillsKeywords);
 
         return sections;
     }
 
     /**
      * Extract section content based on keywords
-     * Enhanced to capture more context around keywords
      */
-    extractSectionByKeywords(text, keywords, contextWords = 100) {
+    extractSectionByKeywords(text, keywords) {
         const lowerText = text.toLowerCase();
 
         for (const keyword of keywords) {
             const index = lowerText.indexOf(keyword);
             if (index !== -1) {
-                // Extract content around the keyword with better boundaries
-                const beforeContext = 20; // Words before the keyword to include
-                const words = text.split(/\s+/);
-
-                // Find word index containing our keyword
-                let wordIndex = 0;
-                let charCount = 0;
-                for (let i = 0; i < words.length; i++) {
-                    if (charCount <= index && charCount + words[i].length >= index) {
-                        wordIndex = i;
-                        break;
-                    }
-                    charCount += words[i].length + 1; // +1 for space
-                }
-
-                // Extract section with context
-                const startIdx = Math.max(0, wordIndex - beforeContext);
-                const endIdx = Math.min(words.length, startIdx + contextWords);
-
-                return words.slice(startIdx, endIdx).join(' ');
+                // Extract content around the keyword (before and after)
+                const startIndex = Math.max(0, index - 50);
+                const words = text.substring(startIndex).split(/\s+/).slice(0, 100);
+                return words.join(' ');
             }
         }
 

@@ -1,11 +1,9 @@
 // frontend/app/(dashboard)/dashboard/resume/page.tsx
 'use client'
-
 import { useAuth } from '@/app/contexts/AuthContext'
 import { useRouter } from 'next/navigation'
 import { useEffect, useState, useRef } from 'react'
 import ResumeList from './ResumeList'
-import VoiceRecorder from '@/app/components/VoiceRecorder'
 
 // TypeScript interfaces define the shape of our data
 // This helps catch type errors during development and provides better IDE support
@@ -270,22 +268,24 @@ export default function ResumePage() {
                     <ResumeList key={refreshKey} />
                 </div>
 
-                {/* Voice Recording Section - NOW FULLY FUNCTIONAL! */}
-                <div className="mt-8 bg-white shadow rounded-lg p-6">
-                    <h2 className="text-lg font-semibold text-gray-900 mb-4">Voice Resume Upload</h2>
-                    <p className="text-sm text-gray-600 mb-4">
-                        Can't find your resume file? Record your experience and let our AI transcribe it for you.
-                    </p>
-                    {/* The VoiceRecorder component receives the same refresh callback as file uploads */}
-                    {/* This ensures voice uploads trigger the same list refresh as file uploads */}
-                    <VoiceRecorder onUploadSuccess={() => setRefreshKey(prev => prev + 1)} />
-                </div>
-
-                {/* Future Features Preview Section - Updated to show only remaining features */}
+                {/* Future Features Preview Section */}
                 <div className="mt-8 bg-white shadow rounded-lg p-6">
                     <h2 className="text-lg font-semibold text-gray-900 mb-4">Coming Soon</h2>
                     <div className="space-y-3">
-                        {/* AI Parsing Feature - Still coming soon */}
+                        {/* Voice Recording Feature */}
+                        <div className="flex items-center">
+                            <div className="flex-shrink-0 h-10 w-10 bg-blue-100 rounded-full flex items-center justify-center">
+                                <svg className="h-6 w-6 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z" />
+                                </svg>
+                            </div>
+                            <div className="ml-4">
+                                <p className="text-sm font-medium text-gray-900">Voice Resume Recording</p>
+                                <p className="text-sm text-gray-500">Record your experience using Whisper AI</p>
+                            </div>
+                        </div>
+
+                        {/* AI Parsing Feature */}
                         <div className="flex items-center">
                             <div className="flex-shrink-0 h-10 w-10 bg-purple-100 rounded-full flex items-center justify-center">
                                 <svg className="h-6 w-6 text-purple-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
