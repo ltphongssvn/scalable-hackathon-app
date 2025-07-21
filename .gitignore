@@ -50,3 +50,6 @@ backend/watch-progress-demo.sh
 frontend/app/*.backup*
 backend/demo-response.json
 backend/src/server-wrapped.js
+
+# Catch all .env files including backups
+.env*
