@@ -6,20 +6,17 @@ node_modules/
 # Testing
 coverage/
 .nyc_output/
-
 # Production builds
 build/
 dist/
 .next/
 out/
-
 # Environment files
 .env
 .env.local
 .env.development.local
 .env.test.local
 .env.production.local
-
 # Logs
 logs/
 *.log
@@ -27,32 +24,29 @@ npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 lerna-debug.log*
-
 # OS files
 .DS_Store
 Thumbs.db
-
 # Editor directories and files
 .idea/
 .vscode/
 *.swp
 *.swo
 *~
-
 # Temporary files
 tmp/
 temp/
 *.tmp
-
 # Database
 *.sqlite
 *.sqlite3
-
 # Uploaded files (if you plan to handle uploads)
 uploads/
 public/uploads/
-
 # Build tools
 .cache/
 .parcel-cache/
 backend/watch-progress-demo.sh
+frontend/app/*.backup*
+backend/demo-response.json
+backend/src/server-wrapped.js
