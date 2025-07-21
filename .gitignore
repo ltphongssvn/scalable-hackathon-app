@@ -55,3 +55,4 @@ public/uploads/
 # Build tools
 .cache/
 .parcel-cache/
+backend/watch-progress-demo.sh
