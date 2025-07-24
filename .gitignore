@@ -53,3 +53,9 @@ backend/src/server-wrapped.js
 
 # Catch all .env files including backups
 .env*
+
+# Backup files
+*.backup.*
+
+# Test files
+auto-commit-test.txt
