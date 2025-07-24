@@ -59,3 +59,4 @@ backend/src/server-wrapped.js
 
 # Test files
 auto-commit-test.txt
+.vercel
