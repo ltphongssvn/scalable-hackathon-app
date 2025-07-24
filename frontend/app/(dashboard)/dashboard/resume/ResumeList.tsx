@@ -1,7 +1,9 @@
 'use client';
+
 import { useEffect, useState } from 'react';
 import { formatDistanceToNow } from 'date-fns';
 import { FileText, Download, Trash2 } from 'lucide-react';
+import Link from 'next/link';
 
 interface Resume {
     id: number;
@@ -19,7 +21,7 @@ interface Resume {
 // Helper function to safely format dates
 const formatDate = (dateValue: string | undefined | null): string => {
     if (!dateValue) return 'Unknown time';
-    
+
     try {
         const date = new Date(dateValue);
         // Check if the date is valid
@@ -55,6 +57,7 @@ export default function ResumeList() {
     const [resumes, setResumes] = useState<Resume[]>([]);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState('');
+    const [deletingId, setDeletingId] = useState<number | null>(null);
 
     useEffect(() => {
         fetchResumes();
@@ -82,7 +85,7 @@ export default function ResumeList() {
 
             const data = await response.json();
             console.log('Fetched data:', data);
-            
+
             // Log the first resume to see its structure
             if (data.data && data.data.length > 0) {
                 console.log('First resume structure:', data.data[0]);
@@ -94,6 +97,41 @@ export default function ResumeList() {
             console.error('Error fetching resumes:', err);
         } finally {
             setLoading(false);
+        }
+    };
+
+    const handleDelete = async (resumeId: number) => {
+        // Confirm deletion with user
+        if (!confirm('Are you sure you want to delete this resume?')) {
+            return;
+        }
+
+        setDeletingId(resumeId);
+
+        try {
+            const token = localStorage.getItem('token');
+            const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/resumes/${resumeId}`, {
+                method: 'DELETE',
+                headers: {
+                    'Authorization': `Bearer ${token}`,
+                },
+            });
+
+            if (!response.ok) {
+                const errorData = await response.json();
+                throw new Error(errorData.message || 'Failed to delete resume');
+            }
+
+            // Remove the deleted resume from the local state
+            setResumes(resumes.filter(resume => resume.id !== resumeId));
+
+            // Show success feedback (you could add a toast notification here)
+            console.log('Resume deleted successfully');
+        } catch (err) {
+            console.error('Error deleting resume:', err);
+            alert('Failed to delete resume. Please try again.');
+        } finally {
+            setDeletingId(null);
         }
     };
 
@@ -119,23 +157,44 @@ export default function ResumeList() {
                     const name = getResumeField(resume, 'name');
                     const size = getResumeField(resume, 'size');
                     const uploadDate = getResumeField(resume, 'date');
-                    
+                    const isDeleting = deletingId === resume.id;
+
                     return (
-                        <div key={resume.id} className="border rounded-lg p-4 flex items-center justify-between hover:bg-gray-50">
-                            <div className="flex items-center space-x-3">
-                                <FileText className="h-8 w-8 text-blue-500" />
-                                <div>
-                                    <p className="font-medium">{name}</p>
+                        <div
+                            key={resume.id}
+                            className={`border rounded-lg p-4 flex items-center justify-between hover:bg-gray-50 transition-opacity ${
+                                isDeleting ? 'opacity-50' : ''
+                            }`}
+                        >
+                            <div className="flex items-center space-x-3 flex-1">
+                                <FileText className="h-8 w-8 text-blue-500 flex-shrink-0" />
+                                <div className="flex-1 min-w-0">
+                                    <Link
+                                        href={`/dashboard/resume/${resume.id}`}
+                                        className="font-medium text-gray-900 hover:text-blue-600 hover:underline block truncate"
+                                    >
+                                        {name}
+                                    </Link>
                                     <p className="text-sm text-gray-500">
                                         {formatFileSize(size)} • Uploaded {formatDate(uploadDate)}
                                     </p>
                                 </div>
                             </div>
-                            <div className="flex space-x-2">
-                                <button className="p-2 text-blue-600 hover:bg-blue-50 rounded">
+                            <div className="flex space-x-2 ml-4 flex-shrink-0">
+                                <button
+                                    className="p-2 text-blue-600 hover:bg-blue-50 rounded"
+                                    title="Download resume"
+                                >
                                     <Download className="h-5 w-5" />
                                 </button>
-                                <button className="p-2 text-red-600 hover:bg-red-50 rounded">
+                                <button
+                                    onClick={() => handleDelete(resume.id)}
+                                    disabled={isDeleting}
+                                    className={`p-2 text-red-600 hover:bg-red-50 rounded ${
+                                        isDeleting ? 'cursor-not-allowed opacity-50' : ''
+                                    }`}
+                                    title="Delete resume"
+                                >
                                     <Trash2 className="h-5 w-5" />
                                 </button>
                             </div>

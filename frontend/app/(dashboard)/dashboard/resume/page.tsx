@@ -1,150 +1,25 @@
-// frontend/app/(dashboard)/dashboard/resume/page.tsx
 'use client'
 
+import { useState, useRef } from 'react'
 import { useAuth } from '@/app/contexts/AuthContext'
 import { useRouter } from 'next/navigation'
-import { useEffect, useState, useRef } from 'react'
+import { Upload, Mic, ArrowLeft, FileText } from 'lucide-react'
 import ResumeList from './ResumeList'
-import VoiceRecorder from '@/app/components/VoiceRecorder'
 
-// TypeScript interfaces define the shape of our data
-// This helps catch type errors during development and provides better IDE support
-interface UploadResponse {
-    success: boolean
-    message: string
-    fileUrl?: string      // Optional: URL where the file is stored
-    parsedData?: any      // Optional: Data extracted by Hugging Face (future feature)
-}
-
-export default function ResumePage() {
-    // Extract authentication data from context
-    // user: current logged-in user object
-    // token: JWT token for API authentication
-    // isLoading: indicates if auth state is still being determined
+export default function ResumeManagementPage() {
     const { user, token, isLoading } = useAuth()
     const router = useRouter()
-
-    // State management for the upload process
-    // Each state variable serves a specific purpose in the UI/UX flow
-    const [selectedFile, setSelectedFile] = useState<File | null>(null)
-    const [uploading, setUploading] = useState(false)
-    const [uploadProgress, setUploadProgress] = useState(0)
-    const [error, setError] = useState<string | null>(null)
-    const [success, setSuccess] = useState<string | null>(null)
-    const [refreshKey, setRefreshKey] = useState(0) // New state to trigger ResumeList refresh
-
-    // useRef creates a reference to the file input DOM element
-    // This allows us to programmatically reset the input after successful upload
     const fileInputRef = useRef<HTMLInputElement>(null)
+    const [uploading, setUploading] = useState(false)
+    const [uploadError, setUploadError] = useState('')
+    const [refreshKey, setRefreshKey] = useState(0)
 
-    // Authentication guard: redirects to login if user is not authenticated
-    // The dependency array ensures this runs whenever auth state changes
-    useEffect(() => {
-        if (!isLoading && !user) {
-            router.push('/login')
-        }
-    }, [user, isLoading, router])
-
-    // File validation function ensures only valid files are processed
-    // This saves bandwidth and provides immediate user feedback
-    const validateFile = (file: File): boolean => {
-        // Define allowed MIME types for resume files
-        const allowedTypes = [
-            'application/pdf',                                                              // PDF files
-            'application/msword',                                                          // .doc files
-            'application/vnd.openxmlformats-officedocument.wordprocessingml.document'    // .docx files
-        ]
-
-        const maxSize = 5 * 1024 * 1024 // 5MB in bytes
-
-        // Check file type
-        if (!allowedTypes.includes(file.type)) {
-            setError('Please upload a PDF or Word document')
-            return false
-        }
-
-        // Check file size
-        if (file.size > maxSize) {
-            setError('File size must be less than 5MB')
-            return false
-        }
-
-        // Clear any previous errors if validation passes
-        setError(null)
-        return true
+    // Redirect if not authenticated
+    if (!isLoading && !user) {
+        router.push('/login')
+        return null
     }
 
-    // Handle file selection from the input element
-    // This runs when user selects a file through the file dialog
-    const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
-        const file = e.target.files?.[0] // Get the first selected file
-
-        if (file && validateFile(file)) {
-            setSelectedFile(file)
-            setError(null) // Clear any previous errors
-        }
-    }
-
-    // Handle the actual file upload to the backend
-    // This is an async function that manages the entire upload flow
-    const handleUpload = async () => {
-        // Early return if prerequisites aren't met
-        if (!selectedFile || !token) return
-
-        // Reset states for new upload attempt
-        setUploading(true)
-        setError(null)
-        setSuccess(null)
-
-        try {
-            // FormData is the standard way to upload files via HTTP
-            // It automatically sets the correct Content-Type header (multipart/form-data)
-            const formData = new FormData()
-            formData.append('resume', selectedFile) // 'resume' is the field name the backend expects
-
-            // Make the API request
-            const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/resumes/upload`, {
-                method: 'POST',
-                headers: {
-                    'Authorization': `Bearer ${token}` // Include JWT token for authentication
-                    // Don't set Content-Type here! FormData needs to set its own boundary
-                },
-                body: formData
-            })
-
-            // Parse the JSON response
-            const data: UploadResponse = await response.json()
-
-            // Check if the request was successful
-            if (!response.ok) {
-                throw new Error(data.message || 'Upload failed')
-            }
-
-            // Success! Update UI accordingly
-            setSuccess('Resume uploaded successfully!')
-            setSelectedFile(null) // Clear selected file
-
-            // Reset the file input element
-            // This is necessary because file inputs maintain their value
-            if (fileInputRef.current) {
-                fileInputRef.current.value = ''
-            }
-
-            // Trigger a refresh of the ResumeList component
-            // By changing the key, React will remount the component and refetch data
-            setRefreshKey(prev => prev + 1)
-
-        } catch (err) {
-            // Error handling with user-friendly messages
-            setError(err instanceof Error ? err.message : 'Upload failed')
-        } finally {
-            // Always run: reset loading states
-            setUploading(false)
-            setUploadProgress(0)
-        }
-    }
-
-    // Loading state while checking authentication
     if (isLoading) {
         return (
             <div className="min-h-screen flex items-center justify-center">
@@ -153,151 +28,142 @@ export default function ResumePage() {
         )
     }
 
-    // Return null if no user (will redirect due to useEffect)
-    if (!user) {
-        return null
+    const handleFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
+        const file = event.target.files?.[0]
+        if (!file) return
+
+        // Validate file type
+        if (file.type !== 'application/pdf') {
+            setUploadError('Please upload a PDF file')
+            return
+        }
+
+        // Validate file size (10MB limit)
+        if (file.size > 10 * 1024 * 1024) {
+            setUploadError('File size must be less than 10MB')
+            return
+        }
+
+        setUploading(true)
+        setUploadError('')
+
+        try {
+            // Create form data for file upload
+            const formData = new FormData()
+            formData.append('resume', file)
+
+            // Upload to backend
+            const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/resumes/upload`, {
+                method: 'POST',
+                headers: {
+                    'Authorization': `Bearer ${token}`
+                },
+                body: formData
+            })
+
+            if (!response.ok) {
+                const error = await response.json()
+                throw new Error(error.message || 'Failed to upload resume')
+            }
+
+            // Clear the file input
+            if (fileInputRef.current) {
+                fileInputRef.current.value = ''
+            }
+
+            // Trigger a refresh of the resume list
+            setRefreshKey(prev => prev + 1)
+
+            // Show success (you could add a toast notification here)
+            console.log('Resume uploaded successfully')
+        } catch (error) {
+            console.error('Upload error:', error)
+            setUploadError(error instanceof Error ? error.message : 'Failed to upload resume')
+        } finally {
+            setUploading(false)
+        }
     }
 
-    // Main component render
+    const handleVoiceRecord = () => {
+        // Navigate to voice recording interface
+        // This would be implemented as a separate page or modal
+        router.push('/dashboard/voice-resume')
+    }
+
     return (
         <div className="min-h-screen bg-gray-50">
-            <div className="max-w-4xl mx-auto py-8 px-4 sm:px-6 lg:px-8">
-                {/* Header Section */}
-                <div className="mb-8">
-                    {/* Back navigation */}
+            <div className="max-w-7xl mx-auto py-6 px-4 sm:px-6 lg:px-8">
+                {/* Header with back button */}
+                <div className="mb-6">
                     <button
                         onClick={() => router.push('/dashboard')}
-                        className="mb-4 text-sm text-gray-600 hover:text-gray-900 flex items-center"
+                        className="flex items-center text-gray-600 hover:text-gray-900 mb-4"
                     >
-                        ← Back to Dashboard
+                        <ArrowLeft className="h-4 w-4 mr-1" />
+                        Back to Dashboard
                     </button>
-
-                    <h1 className="text-3xl font-bold text-gray-900">Upload Your Resume</h1>
-                    <p className="mt-2 text-gray-600">
-                        Upload your resume in PDF or Word format. We'll parse it using AI to extract relevant information.
-                    </p>
+                    <h1 className="text-3xl font-bold text-gray-900">Resume Management</h1>
+                    <p className="mt-2 text-gray-600">Upload and manage your professional profile</p>
                 </div>
 
-                {/* Main Upload Card */}
-                <div className="bg-white shadow rounded-lg p-6">
-                    {/* Error Message Display */}
-                    {error && (
-                        <div className="mb-4 p-4 bg-red-50 border border-red-200 rounded-md">
-                            <p className="text-sm text-red-600">{error}</p>
-                        </div>
-                    )}
+                {/* Upload Section */}
+                <div className="bg-white shadow rounded-lg p-6 mb-8">
+                    <h2 className="text-xl font-semibold mb-4">Upload New Resume</h2>
 
-                    {/* Success Message Display */}
-                    {success && (
-                        <div className="mb-4 p-4 bg-green-50 border border-green-200 rounded-md">
-                            <p className="text-sm text-green-600">{success}</p>
-                        </div>
-                    )}
-
-                    {/* File Upload Drop Zone */}
-                    <div className="border-2 border-dashed border-gray-300 rounded-lg p-8 text-center">
-                        {/* Upload Icon */}
-                        <svg
-                            className="mx-auto h-12 w-12 text-gray-400"
-                            stroke="currentColor"
-                            fill="none"
-                            viewBox="0 0 48 48"
-                            aria-hidden="true"
-                        >
-                            <path
-                                d="M28 8H12a4 4 0 00-4 4v20m32-12v8m0 0v8a4 4 0 01-4 4H12a4 4 0 01-4-4v-4m32-4l-3.172-3.172a4 4 0 00-5.656 0L28 28M8 32l9.172-9.172a4 4 0 015.656 0L28 28m0 0l4 4m4-24h8m-4-4v8m-12 4h.02"
-                                strokeWidth={2}
-                                strokeLinecap="round"
-                                strokeLinejoin="round"
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        {/* PDF Upload */}
+                        <div className="border-2 border-dashed border-gray-300 rounded-lg p-6 text-center hover:border-blue-400 transition-colors">
+                            <FileText className="mx-auto h-12 w-12 text-gray-400 mb-3" />
+                            <p className="text-sm text-gray-600 mb-3">Upload PDF Resume</p>
+                            <input
+                                ref={fileInputRef}
+                                type="file"
+                                accept=".pdf"
+                                onChange={handleFileUpload}
+                                className="hidden"
+                                id="file-upload"
+                                disabled={uploading}
                             />
-                        </svg>
+                            <label
+                                htmlFor="file-upload"
+                                className={`inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md text-white ${
+                                    uploading
+                                        ? 'bg-gray-400 cursor-not-allowed'
+                                        : 'bg-blue-600 hover:bg-blue-700 cursor-pointer'
+                                }`}
+                            >
+                                <Upload className="h-4 w-4 mr-2" />
+                                {uploading ? 'Uploading...' : 'Choose File'}
+                            </label>
+                            <p className="text-xs text-gray-500 mt-2">PDF format, max 10MB</p>
+                        </div>
 
-                        {/* Hidden File Input */}
-                        <input
-                            ref={fileInputRef}
-                            type="file"
-                            onChange={handleFileSelect}
-                            accept=".pdf,.doc,.docx"  // Limit file picker to these types
-                            className="hidden"
-                            id="file-upload"
-                        />
-
-                        {/* Visible Label that triggers file input */}
-                        <label
-                            htmlFor="file-upload"
-                            className="mt-4 cursor-pointer inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md text-white bg-blue-600 hover:bg-blue-700"
-                        >
-                            Select File
-                        </label>
-
-                        <p className="mt-2 text-sm text-gray-500">
-                            PDF, DOC, or DOCX up to 5MB
-                        </p>
-
-                        {/* Selected File Display */}
-                        {selectedFile && (
-                            <div className="mt-4 p-4 bg-gray-50 rounded-md">
-                                <p className="text-sm text-gray-700">
-                                    Selected: <span className="font-medium">{selectedFile.name}</span>
-                                </p>
-                                <p className="text-xs text-gray-500">
-                                    Size: {(selectedFile.size / 1024 / 1024).toFixed(2)} MB
-                                </p>
-                            </div>
-                        )}
-                    </div>
-
-                    {/* Upload Button */}
-                    <div className="mt-6">
-                        <button
-                            onClick={handleUpload}
-                            disabled={!selectedFile || uploading}
-                            className={`w-full flex justify-center py-2 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-white ${
-                                !selectedFile || uploading
-                                    ? 'bg-gray-400 cursor-not-allowed'
-                                    : 'bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500'
-                            }`}
-                        >
-                            {uploading ? 'Uploading...' : 'Upload Resume'}
-                        </button>
-                    </div>
-                </div>
-
-                {/* Resume List Section - This is the key integration! */}
-                {/* The key prop forces a remount when refreshKey changes, triggering a data refetch */}
-                <div className="mt-8 bg-white shadow rounded-lg p-6">
-                    <h2 className="text-lg font-semibold text-gray-900 mb-4">Your Uploaded Resumes</h2>
-                    <ResumeList key={refreshKey} />
-                </div>
-
-                {/* Voice Recording Section - NOW FULLY FUNCTIONAL! */}
-                <div className="mt-8 bg-white shadow rounded-lg p-6">
-                    <h2 className="text-lg font-semibold text-gray-900 mb-4">Voice Resume Upload</h2>
-                    <p className="text-sm text-gray-600 mb-4">
-                        Can't find your resume file? Record your experience and let our AI transcribe it for you.
-                    </p>
-                    {/* The VoiceRecorder component receives the same refresh callback as file uploads */}
-                    {/* This ensures voice uploads trigger the same list refresh as file uploads */}
-                    <VoiceRecorder onUploadSuccess={() => setRefreshKey(prev => prev + 1)} />
-                </div>
-
-                {/* Future Features Preview Section - Updated to show only remaining features */}
-                <div className="mt-8 bg-white shadow rounded-lg p-6">
-                    <h2 className="text-lg font-semibold text-gray-900 mb-4">Coming Soon</h2>
-                    <div className="space-y-3">
-                        {/* AI Parsing Feature - Still coming soon */}
-                        <div className="flex items-center">
-                            <div className="flex-shrink-0 h-10 w-10 bg-purple-100 rounded-full flex items-center justify-center">
-                                <svg className="h-6 w-6 text-purple-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
-                                </svg>
-                            </div>
-                            <div className="ml-4">
-                                <p className="text-sm font-medium text-gray-900">AI Resume Parsing</p>
-                                <p className="text-sm text-gray-500">Automatic extraction with Hugging Face</p>
-                            </div>
+                        {/* Voice Recording */}
+                        <div className="border-2 border-dashed border-gray-300 rounded-lg p-6 text-center hover:border-blue-400 transition-colors">
+                            <Mic className="mx-auto h-12 w-12 text-gray-400 mb-3" />
+                            <p className="text-sm text-gray-600 mb-3">Record Voice Introduction</p>
+                            <button
+                                onClick={handleVoiceRecord}
+                                className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md text-white bg-green-600 hover:bg-green-700"
+                            >
+                                <Mic className="h-4 w-4 mr-2" />
+                                Start Recording
+                            </button>
+                            <p className="text-xs text-gray-500 mt-2">2-minute audio introduction</p>
                         </div>
                     </div>
+
+                    {/* Error Message */}
+                    {uploadError && (
+                        <div className="mt-4 p-3 bg-red-50 border border-red-200 rounded-md">
+                            <p className="text-sm text-red-600">{uploadError}</p>
+                        </div>
+                    )}
+                </div>
+
+                {/* Resume List Section */}
+                <div className="bg-white shadow rounded-lg p-6">
+                    <ResumeList key={refreshKey} />
                 </div>
             </div>
         </div>
