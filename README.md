@@ -299,4 +299,5 @@ This project is licensed under the MIT License, promoting open source collaborat
 
 ---
 
-**Remember:** Technology should empower everyone. By making job searching more accessible through AI and voice technology, we're taking one step toward a more inclusive future. Every contribution, no matter how small, helps someone find their next opportunity.
+**Remember:** Technology should empower everyone. By making job searching more accessible through AI and voice technology, we're taking one step toward a more inclusive future. Every contribution, no matter how small, helps someone find their next opportunity.# Deployment Configuration
+Frontend is deployed via Vercel with root directory set to 'frontend'
