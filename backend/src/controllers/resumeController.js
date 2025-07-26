@@ -147,7 +147,7 @@ async function parseResumeAsync(resumeId, filePath, userId) {
             SET 
                 parsed_data = $1,
                 parsed_at = NOW(),
-                status = 'completed'
+                processing_status = 'completed'
             WHERE id = $2 AND user_id = $3
         `;
 
@@ -166,7 +166,7 @@ async function parseResumeAsync(resumeId, filePath, userId) {
         const errorQuery = `
             UPDATE resumes 
             SET 
-                status = 'failed',
+                processing_status = 'failed',
                 error_message = $1
             WHERE id = $2 AND user_id = $3
         `;
@@ -191,7 +191,7 @@ async function getUserResumes(req, res) {
                 original_name,
                 file_size,
                 mime_type,
-                status,
+                processing_status as status,
                 uploaded_at,
                 parsed_at,
                 CASE 
@@ -236,7 +236,7 @@ async function getResumeParsedData(req, res) {
                 id,
                 original_name,
                 parsed_data,
-                status,
+                processing_status as status,
                 error_message,
                 parsed_at
             FROM resumes
@@ -317,7 +317,7 @@ async function reparseResume(req, res) {
         const updateQuery = `
             UPDATE resumes 
             SET 
-                status = 'processing',
+                processing_status = 'processing',
                 error_message = NULL,
                 parsed_data = NULL,
                 parsed_at = NULL
