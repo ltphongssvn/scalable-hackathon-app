@@ -60,3 +60,6 @@ backend/src/server-wrapped.js
 # Test files
 auto-commit-test.txt
 .vercel
+
+# Backup files
+*.backup-*

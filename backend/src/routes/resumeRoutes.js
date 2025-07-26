@@ -4,7 +4,7 @@
 const express = require('express');
 const router = express.Router();
 const { authenticate } = require('../middleware/auth');
-const { upload } = require('../config/upload');
+const { resumeUpload: upload } = require('../config/unifiedUploadConfig');
 const resumeController = require('../controllers/resumeController.enhanced.compatible');
 
 // All resume routes require authentication

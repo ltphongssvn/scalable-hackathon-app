@@ -1,7 +1,6 @@
 // Enhanced Resume Controller with Compatibility Mode
 // This version works with the existing database schema while providing progress tracking
-// It demonstrates how to add new features without breaking existing systems
-
+// Updated to support both local and S3 storage
 const path = require('path');
 const fs = require('fs').promises;
 const { query } = require('../config/database');
@@ -11,11 +10,13 @@ const { v4: uuidv4 } = require('uuid');
 
 /**
  * Enhanced upload function with progress tracking (Compatible Version)
+ * Now supports both local and S3 storage
  *
  * This version works with the existing database schema by:
  * 1. Not storing the upload_tracking_id in the database
  * 2. Still providing progress tracking functionality
  * 3. Maintaining backward compatibility
+ * 4. Supporting both local and S3 storage
  */
 async function uploadResumeWithProgress(req, res) {
     const uploadId = uuidv4();
@@ -49,26 +50,51 @@ async function uploadResumeWithProgress(req, res) {
             message: 'Validating file format and size'
         });
 
-        // Extract file information
-        const {
-            filename,
-            path: filePath,
-            size,
-            mimetype
-        } = req.file;
+        // Detect storage type and extract file information accordingly
+        let fileInfo = {};
+
+        // Check if this is an S3 upload (multer-s3 adds these properties)
+        if (req.file.location && req.file.key) {
+            // S3 storage
+            console.log('Processing S3 upload');
+            fileInfo = {
+                filename: req.file.key.split('/').pop(), // Extract filename from S3 key
+                filePath: req.file.location,             // Full S3 URL
+                storagePath: req.file.key,               // S3 key for database
+                size: req.file.size,
+                mimetype: req.file.contentType || req.file.mimetype,
+                isS3: true
+            };
+        } else {
+            // Local storage
+            console.log('Processing local upload');
+            fileInfo = {
+                filename: req.file.filename,
+                filePath: req.file.path,
+                storagePath: `uploads/resumes/${req.file.filename}`,
+                size: req.file.size,
+                mimetype: req.file.mimetype,
+                isS3: false
+            };
+        }
 
         const originalName = req.uploadedFileOriginalName || req.file.originalname;
-
         console.log(`Processing resume upload: ${originalName} (Track ID: ${uploadId})`);
+        console.log(`Storage type: ${fileInfo.isS3 ? 'S3' : 'Local'}`);
 
         // Validate file type and size
         const allowedTypes = ['application/pdf', 'application/msword',
             'application/vnd.openxmlformats-officedocument.wordprocessingml.document'];
         const maxSize = 5 * 1024 * 1024; // 5MB
 
-        if (!allowedTypes.includes(mimetype)) {
+        if (!allowedTypes.includes(fileInfo.mimetype)) {
             uploadProgressService.failTracking(uploadId, 'Invalid file type', 'validation');
-            await fs.unlink(filePath);
+
+            // Clean up file if using local storage
+            if (!fileInfo.isS3 && req.file.path) {
+                await fs.unlink(req.file.path);
+            }
+
             return res.status(400).json({
                 success: false,
                 message: 'Please upload a PDF or Word document',
@@ -76,9 +102,14 @@ async function uploadResumeWithProgress(req, res) {
             });
         }
 
-        if (size > maxSize) {
+        if (fileInfo.size > maxSize) {
             uploadProgressService.failTracking(uploadId, 'File too large', 'validation');
-            await fs.unlink(filePath);
+
+            // Clean up file if using local storage
+            if (!fileInfo.isS3 && req.file.path) {
+                await fs.unlink(req.file.path);
+            }
+
             return res.status(400).json({
                 success: false,
                 message: 'File size must be less than 5MB',
@@ -112,11 +143,11 @@ async function uploadResumeWithProgress(req, res) {
 
         const values = [
             req.user.id,
-            filename,
+            fileInfo.filename,
             originalName,
-            `uploads/resumes/${filename}`,
-            size,
-            mimetype
+            fileInfo.storagePath,  // This will be S3 key or local path
+            fileInfo.size,
+            fileInfo.mimetype
         ];
 
         const result = await query(insertQuery, values);
@@ -125,8 +156,10 @@ async function uploadResumeWithProgress(req, res) {
         console.log(`Resume saved to database with ID: ${resume.id}`);
 
         // Store the mapping between uploadId and resumeId in memory
-        // This is a temporary solution until we can add the column to the database
-        uploadProgressService.setMetadata(uploadId, { resumeId: resume.id });
+        uploadProgressService.setMetadata(uploadId, {
+            resumeId: resume.id,
+            storageType: fileInfo.isS3 ? 's3' : 'local'
+        });
 
         // Update progress: Database storage complete
         uploadProgressService.updateProgress(uploadId, 'storing', 100, {
@@ -140,7 +173,8 @@ async function uploadResumeWithProgress(req, res) {
         });
 
         // Trigger enhanced async parsing with progress tracking
-        parseResumeAsyncWithProgress(resume.id, filePath, req.user.id, uploadId);
+        // For S3 files, we pass the S3 URL; for local files, we pass the file path
+        parseResumeAsyncWithProgress(resume.id, fileInfo.filePath, req.user.id, uploadId);
 
         // Send response with upload ID for progress tracking
         res.status(201).json({
@@ -153,7 +187,8 @@ async function uploadResumeWithProgress(req, res) {
                 size: resume.file_size,
                 uploadedAt: resume.uploaded_at,
                 parsingStatus: 'in_progress',
-                progressUrl: `/api/v1/progresss/${uploadId}`
+                progressUrl: `/api/v1/progress/${uploadId}`,
+                storageType: fileInfo.isS3 ? 's3' : 'local'
             }
         });
 
@@ -161,8 +196,8 @@ async function uploadResumeWithProgress(req, res) {
         console.error('Resume upload error:', error);
         uploadProgressService.failTracking(uploadId, error.message, 'storing');
 
-        // Clean up file if database operation failed
-        if (req.file) {
+        // Clean up file if database operation failed and using local storage
+        if (req.file && req.file.path && !req.file.location) {
             try {
                 await fs.unlink(req.file.path);
                 console.log('Cleaned up uploaded file after error');
@@ -174,17 +209,20 @@ async function uploadResumeWithProgress(req, res) {
         res.status(500).json({
             success: false,
             message: 'Failed to upload resume',
-            uploadId
+            uploadId,
+            error: process.env.NODE_ENV === 'development' ? error.message : undefined
         });
     }
 }
 
 /**
  * Enhanced async parsing with progress updates
+ * Now handles both local files and S3 URLs
  */
 async function parseResumeAsyncWithProgress(resumeId, filePath, userId, uploadId) {
     try {
         console.log(`Starting AI parsing for resume ID: ${resumeId} (Track: ${uploadId})`);
+        console.log(`File path/URL: ${filePath}`);
 
         // Update progress through parsing stages
         uploadProgressService.updateProgress(uploadId, 'parsing', 30, {
@@ -198,6 +236,7 @@ async function parseResumeAsyncWithProgress(resumeId, filePath, userId, uploadId
         });
 
         // Call the Hugging Face service
+        // The service should be able to handle both local paths and S3 URLs
         const parseResult = await huggingFaceService.parseResume(filePath);
 
         uploadProgressService.updateProgress(uploadId, 'parsing', 80, {
@@ -207,8 +246,8 @@ async function parseResumeAsyncWithProgress(resumeId, filePath, userId, uploadId
         if (parseResult.success) {
             // Update database with parsed data
             const updateQuery = `
-                UPDATE resumes 
-                SET 
+                UPDATE resumes
+                SET
                     parsed_data = $1,
                     parsed_at = NOW()
                 WHERE id = $2 AND user_id = $3
@@ -234,15 +273,14 @@ async function parseResumeAsyncWithProgress(resumeId, filePath, userId, uploadId
             });
 
             console.log(`✓ Resume ID ${resumeId} parsed successfully`);
-
         } else {
             console.error(`Failed to parse resume ID ${resumeId}:`, parseResult.error);
             uploadProgressService.failTracking(uploadId, parseResult.error, 'parsing');
 
             // Still update the database to record the attempt
             const updateQuery = `
-                UPDATE resumes 
-                SET 
+                UPDATE resumes
+                SET
                     parsed_data = $1,
                     parsed_at = NOW()
                 WHERE id = $2 AND user_id = $3
@@ -288,6 +326,7 @@ async function streamUploadProgress(req, res) {
 }
 
 // Export all functions
+// Note: We're using the updated base controller functions that now support both storage types
 module.exports = {
     uploadResume: uploadResumeWithProgress,
     streamUploadProgress,

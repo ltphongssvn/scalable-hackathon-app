@@ -1,17 +1,21 @@
-// Resume Controller with AI Parsing Integration
-// Handles all resume-related operations including upload, retrieval, deletion, and AI parsing
-const path = require('path');
-const fs = require('fs').promises;
+// Resume Controller
+// Handles all business logic related to resume operations
+// Updated to support both local and S3 storage
+
 const { query } = require('../config/database');
-const huggingFaceService = require('../services/ai/huggingfaceService');
+const fs = require('fs').promises;
+const path = require('path');
+const huggingFaceService = require('../services/huggingFaceResumeService');
 
 /**
- * Upload and parse a resume
- * This function handles the complete resume processing pipeline:
- * 1. File upload (handled by multer middleware)
- * 2. Database storage of file metadata
- * 3. AI parsing of resume content
- * 4. Storage of parsed data
+ * Upload Resume Controller
+ * Handles file upload for both local and S3 storage
+ *
+ * Process:
+ * 1. File validation (handled by multer)
+ * 2. Storage-agnostic file handling
+ * 3. Database record creation
+ * 4. Async parsing trigger
  */
 async function uploadResume(req, res) {
     try {
@@ -23,19 +27,39 @@ async function uploadResume(req, res) {
             });
         }
 
-        // Extract file information from multer
-        const {
-            filename,      // Unique filename on server
-            path: filePath,  // Full path to uploaded file
-            size,          // File size in bytes
-            mimetype       // MIME type of the file
-        } = req.file;
+        // Detect storage type and extract file information accordingly
+        let fileInfo = {};
+
+        // Check if this is an S3 upload (multer-s3 adds these properties)
+        if (req.file.location && req.file.key) {
+            // S3 storage
+            console.log('Processing S3 upload');
+            fileInfo = {
+                filename: req.file.key.split('/').pop(), // Extract filename from S3 key
+                filePath: req.file.location,             // Full S3 URL
+                storagePath: req.file.key,               // S3 key for database
+                size: req.file.size,
+                mimetype: req.file.contentType || req.file.mimetype
+            };
+        } else {
+            // Local storage
+            console.log('Processing local upload');
+            fileInfo = {
+                filename: req.file.filename,
+                filePath: req.file.path,
+                storagePath: `uploads/resumes/${req.file.filename}`,
+                size: req.file.size,
+                mimetype: req.file.mimetype
+            };
+        }
 
         // Get the original filename
         const originalName = req.uploadedFileOriginalName || req.file.originalname;
-        console.log(`Processing resume upload: ${originalName}`);
 
-        // First, store the file metadata in database
+        console.log(`Processing resume upload: ${originalName}`);
+        console.log(`Storage type: ${req.file.location ? 'S3' : 'Local'}`);
+
+        // Store the file metadata in database
         const insertQuery = `
             INSERT INTO resumes (
                 user_id,
@@ -50,12 +74,12 @@ async function uploadResume(req, res) {
         `;
 
         const values = [
-            req.user.id,                    // From auth middleware
-            filename,                        // Unique filename on server
-            originalName,                    // Original filename from user
-            `uploads/resumes/${filename}`,   // Relative path to file
-            size,                           // File size
-            mimetype                        // File type
+            req.user.id,
+            fileInfo.filename,
+            originalName,
+            fileInfo.storagePath,  // This will be S3 key or local path
+            fileInfo.size,
+            fileInfo.mimetype
         ];
 
         const result = await query(insertQuery, values);
@@ -63,111 +87,100 @@ async function uploadResume(req, res) {
 
         console.log(`Resume saved to database with ID: ${resume.id}`);
 
-        // Now, trigger AI parsing asynchronously
-        // We don't want to block the upload response while parsing
-        parseResumeAsync(resume.id, filePath, req.user.id);
+        // Trigger AI parsing asynchronously
+        // For S3 files, we pass the S3 URL; for local files, we pass the file path
+        parseResumeAsync(resume.id, fileInfo.filePath, req.user.id);
 
         // Send immediate success response
-        // The parsing will happen in the background
-        res.status(201).json({
+        res.json({
             success: true,
-            message: 'Resume uploaded successfully. AI parsing in progress...',
+            message: 'Resume uploaded successfully',
             data: {
                 id: resume.id,
-                filename: resume.original_name,
-                size: resume.file_size,
+                filename: resume.filename,
+                originalName: resume.original_name,
+                fileSize: resume.file_size,
                 uploadedAt: resume.uploaded_at,
-                parsingStatus: 'in_progress'
+                status: 'processing'
             }
         });
-    } catch (error) {
-        console.error('Resume upload error:', error);
 
-        // Clean up file if database operation failed
-        if (req.file) {
+    } catch (error) {
+        console.error('Upload error:', error);
+
+        // If upload failed and we're using local storage, try to clean up the file
+        if (req.file && req.file.path && !req.file.location) {
             try {
                 await fs.unlink(req.file.path);
-                console.log('Cleaned up uploaded file after error');
-            } catch (unlinkError) {
-                console.error('Error deleting file:', unlinkError);
+                console.log('Cleaned up failed upload file');
+            } catch (cleanupError) {
+                console.error('Error cleaning up file:', cleanupError);
             }
         }
 
         res.status(500).json({
             success: false,
-            message: 'Failed to upload resume'
+            message: 'Failed to upload resume',
+            error: process.env.NODE_ENV === 'development' ? error.message : undefined
         });
     }
 }
 
 /**
- * Asynchronously parse a resume using AI
- * This function runs in the background after the upload response is sent
+ * Parse Resume Asynchronously
+ * This runs in the background after upload response is sent
+ *
  * @param {number} resumeId - Database ID of the resume
- * @param {string} filePath - Path to the uploaded file
- * @param {number} userId - ID of the user who uploaded the resume
+ * @param {string} filePath - Path to the uploaded file (local path or S3 URL)
+ * @param {number} userId - ID of the user who uploaded
  */
 async function parseResumeAsync(resumeId, filePath, userId) {
-    try {
-        console.log(`Starting AI parsing for resume ID: ${resumeId}`);
+    console.log(`Starting async parsing for resume ${resumeId}`);
 
+    try {
         // Call the Hugging Face service to parse the resume
         const parseResult = await huggingFaceService.parseResume(filePath);
 
-        if (parseResult.success) {
-            // Update the database with parsed data
-            const updateQuery = `
-                UPDATE resumes 
-                SET 
-                    parsed_data = $1,
-                    parsed_at = NOW()
-                WHERE id = $2 AND user_id = $3
-            `;
+        // Update the resume record with parsed data
+        const updateQuery = `
+            UPDATE resumes 
+            SET 
+                parsed_data = $1,
+                parsed_at = NOW(),
+                status = 'completed'
+            WHERE id = $2 AND user_id = $3
+        `;
 
-            await query(updateQuery, [
-                JSON.stringify(parseResult.data),  // Store as JSON
-                resumeId,
-                userId
-            ]);
+        await query(updateQuery, [
+            JSON.stringify(parseResult),
+            resumeId,
+            userId
+        ]);
 
-            console.log(`✓ Resume ID ${resumeId} parsed successfully`);
+        console.log(`Successfully parsed resume ${resumeId}`);
 
-            // Log extracted information for debugging
-            console.log('Extracted data:', {
-                name: parseResult.data.name,
-                email: parseResult.data.email,
-                skills: parseResult.data.skills?.length || 0,
-                hasEducation: !!parseResult.data.education,
-                hasExperience: !!parseResult.data.experience
-            });
-        } else {
-            console.error(`Failed to parse resume ID ${resumeId}:`, parseResult.error);
-
-            // Even if parsing fails, we might want to mark it as attempted
-            // This prevents the system from trying to parse it repeatedly
-            const updateQuery = `
-                UPDATE resumes 
-                SET 
-                    parsed_data = $1,
-                    parsed_at = NOW()
-                WHERE id = $2 AND user_id = $3
-            `;
-
-            await query(updateQuery, [
-                JSON.stringify({ error: parseResult.error, attempted: true }),
-                resumeId,
-                userId
-            ]);
-        }
     } catch (error) {
-        console.error(`Error in async resume parsing for ID ${resumeId}:`, error);
+        console.error(`Error parsing resume ${resumeId}:`, error);
+
+        // Update status to failed
+        const errorQuery = `
+            UPDATE resumes 
+            SET 
+                status = 'failed',
+                error_message = $1
+            WHERE id = $2 AND user_id = $3
+        `;
+
+        await query(errorQuery, [
+            error.message,
+            resumeId,
+            userId
+        ]);
     }
 }
 
 /**
  * Get all resumes for the authenticated user
- * Now includes parsed data status and preview
- * FIXED: Handles PostgreSQL JSON column type properly
  */
 async function getUserResumes(req, res) {
     try {
@@ -178,9 +191,18 @@ async function getUserResumes(req, res) {
                 original_name,
                 file_size,
                 mime_type,
+                status,
                 uploaded_at,
                 parsed_at,
-                parsed_data
+                CASE 
+                    WHEN parsed_data IS NOT NULL 
+                    THEN jsonb_build_object(
+                        'name', parsed_data->'name',
+                        'email', parsed_data->'email',
+                        'summary', parsed_data->'summary'
+                    )
+                    ELSE NULL
+                END as preview
             FROM resumes
             WHERE user_id = $1
             ORDER BY uploaded_at DESC
@@ -188,67 +210,11 @@ async function getUserResumes(req, res) {
 
         const result = await query(selectQuery, [req.user.id]);
 
-        // Transform the data to include parsing status
-        // This now properly handles PostgreSQL's automatic JSON parsing
-        const resumesWithStatus = result.rows.map(resume => {
-            let parsedPreview = null;
-            let parsingStatus = 'not_started';
-
-            if (resume.parsed_at) {
-                parsingStatus = 'completed';
-
-                try {
-                    // CRITICAL FIX: Handle data that's already been parsed by PostgreSQL
-                    let parsedData;
-
-                    if (typeof resume.parsed_data === 'object' && resume.parsed_data !== null) {
-                        // Data is already an object (PostgreSQL JSON column auto-parsed it)
-                        parsedData = resume.parsed_data;
-                    } else if (typeof resume.parsed_data === 'string') {
-                        // Data is a string (shouldn't happen with JSON column, but defensive coding)
-                        parsedData = JSON.parse(resume.parsed_data);
-                    } else {
-                        // No valid data
-                        throw new Error('No valid parsed data');
-                    }
-
-                    // Check if it's an error record
-                    if (parsedData.error) {
-                        parsingStatus = 'failed';
-                    } else {
-                        // Create a preview of parsed data
-                        parsedPreview = {
-                            name: parsedData.name,
-                            email: parsedData.email,
-                            skillsCount: parsedData.skills?.length || 0,
-                            hasEducation: !!parsedData.education,
-                            hasExperience: !!parsedData.experience
-                        };
-                    }
-                } catch (parseError) {
-                    console.error('Error processing parsed data:', parseError.message);
-                    parsingStatus = 'error';
-                }
-            }
-
-            return {
-                id: resume.id,
-                filename: resume.filename,
-                originalName: resume.original_name,
-                fileSize: resume.file_size,
-                mimeType: resume.mime_type,
-                uploadedAt: resume.uploaded_at,
-                parsingStatus,
-                parsedAt: resume.parsed_at,
-                parsedPreview
-            };
-        });
-
         res.json({
             success: true,
-            count: result.rows.length,
-            data: resumesWithStatus
+            data: result.rows
         });
+
     } catch (error) {
         console.error('Error fetching resumes:', error);
         res.status(500).json({
@@ -259,26 +225,25 @@ async function getUserResumes(req, res) {
 }
 
 /**
- * Get detailed parsed data for a specific resume
- * Returns the complete extracted information
- * FIXED: Also handles PostgreSQL JSON column type
+ * Get parsed data for a specific resume
  */
 async function getResumeParsedData(req, res) {
     try {
-        const resumeId = req.params.id;
+        const { id } = req.params;
 
         const selectQuery = `
             SELECT 
-                r.id,
-                r.original_name,
-                r.parsed_at,
-                r.parsed_data,
-                r.file_path
-            FROM resumes r
-            WHERE r.id = $1 AND r.user_id = $2
+                id,
+                original_name,
+                parsed_data,
+                status,
+                error_message,
+                parsed_at
+            FROM resumes
+            WHERE id = $1 AND user_id = $2
         `;
 
-        const result = await query(selectQuery, [resumeId, req.user.id]);
+        const result = await query(selectQuery, [id, req.user.id]);
 
         if (result.rows.length === 0) {
             return res.status(404).json({
@@ -289,65 +254,55 @@ async function getResumeParsedData(req, res) {
 
         const resume = result.rows[0];
 
-        // Parse the stored JSON data
-        let parsedData = null;
-        let parsingStatus = 'not_started';
-
-        if (resume.parsed_data) {
-            try {
-                // CRITICAL FIX: Handle both object and string data types
-                if (typeof resume.parsed_data === 'object' && resume.parsed_data !== null) {
-                    // Data is already an object
-                    parsedData = resume.parsed_data;
-                } else if (typeof resume.parsed_data === 'string') {
-                    // Data is a string, needs parsing
-                    parsedData = JSON.parse(resume.parsed_data);
-                } else {
-                    throw new Error('Invalid parsed data format');
+        // Check if parsing is complete
+        if (resume.status !== 'completed' || !resume.parsed_data) {
+            return res.status(200).json({
+                success: true,
+                data: {
+                    id: resume.id,
+                    status: resume.status,
+                    error: resume.error_message,
+                    message: resume.status === 'processing'
+                        ? 'Resume is still being processed. Please check back later.'
+                        : 'Resume parsing failed or is incomplete.'
                 }
-
-                parsingStatus = parsedData.error ? 'failed' : 'completed';
-            } catch (error) {
-                console.error('Error processing parsed data:', error);
-                parsingStatus = 'error';
-            }
+            });
         }
 
         res.json({
             success: true,
             data: {
                 id: resume.id,
-                filename: resume.original_name,
-                parsedAt: resume.parsed_at,
-                parsingStatus,
-                parsedData: parsedData
+                originalName: resume.original_name,
+                parsedData: resume.parsed_data,
+                parsedAt: resume.parsed_at
             }
         });
+
     } catch (error) {
-        console.error('Error fetching resume parsed data:', error);
+        console.error('Error fetching parsed data:', error);
         res.status(500).json({
             success: false,
-            message: 'Failed to fetch resume data'
+            message: 'Failed to fetch parsed data'
         });
     }
 }
 
 /**
- * Re-parse a resume
- * This endpoint allows users to trigger re-parsing if needed
+ * Trigger re-parsing of a resume
  */
 async function reparseResume(req, res) {
     try {
-        const resumeId = req.params.id;
+        const { id } = req.params;
 
-        // Get the resume file path
+        // Get the resume details
         const selectQuery = `
-            SELECT id, file_path, filename
+            SELECT id, file_path
             FROM resumes
             WHERE id = $1 AND user_id = $2
         `;
 
-        const result = await query(selectQuery, [resumeId, req.user.id]);
+        const result = await query(selectQuery, [id, req.user.id]);
 
         if (result.rows.length === 0) {
             return res.status(404).json({
@@ -357,44 +312,72 @@ async function reparseResume(req, res) {
         }
 
         const resume = result.rows[0];
-        const fullPath = path.join(process.cwd(), resume.file_path);
+
+        // Reset status to processing
+        const updateQuery = `
+            UPDATE resumes 
+            SET 
+                status = 'processing',
+                error_message = NULL,
+                parsed_data = NULL,
+                parsed_at = NULL
+            WHERE id = $1 AND user_id = $2
+        `;
+
+        await query(updateQuery, [id, req.user.id]);
+
+        // Determine file path based on storage type
+        let filePath;
+        if (resume.file_path.startsWith('http') || resume.file_path.startsWith('https')) {
+            // S3 URL stored in database
+            filePath = resume.file_path;
+        } else if (resume.file_path.startsWith('resumes/')) {
+            // S3 key stored in database - need to construct URL
+            // This assumes you have S3_BUCKET_NAME and AWS_REGION in env
+            const bucketName = process.env.S3_BUCKET_NAME;
+            const region = process.env.AWS_REGION || 'us-east-1';
+            filePath = `https://${bucketName}.s3.${region}.amazonaws.com/${resume.file_path}`;
+        } else {
+            // Local file path
+            filePath = path.join(__dirname, '../../', resume.file_path);
+        }
 
         // Trigger re-parsing
-        parseResumeAsync(resume.id, fullPath, req.user.id);
+        parseResumeAsync(resume.id, filePath, req.user.id);
 
         res.json({
             success: true,
-            message: 'Re-parsing initiated. Check back in a few moments for results.',
+            message: 'Resume re-parsing initiated',
             data: {
                 id: resume.id,
-                filename: resume.filename
+                status: 'processing'
             }
         });
+
     } catch (error) {
-        console.error('Error initiating re-parse:', error);
+        console.error('Error triggering re-parse:', error);
         res.status(500).json({
             success: false,
-            message: 'Failed to initiate re-parsing'
+            message: 'Failed to trigger re-parsing'
         });
     }
 }
 
 /**
  * Delete a resume
- * Deletes file and all associated data including parsed information
  */
 async function deleteResume(req, res) {
     try {
-        const resumeId = req.params.id;
+        const { id } = req.params;
 
-        // Get file information
+        // Get file information before deleting
         const selectQuery = `
-            SELECT filename, file_path
+            SELECT id, filename, file_path
             FROM resumes
             WHERE id = $1 AND user_id = $2
         `;
 
-        const result = await query(selectQuery, [resumeId, req.user.id]);
+        const result = await query(selectQuery, [id, req.user.id]);
 
         if (result.rows.length === 0) {
             return res.status(404).json({
@@ -405,23 +388,45 @@ async function deleteResume(req, res) {
 
         const resume = result.rows[0];
 
-        // Delete the file from filesystem
-        try {
-            const fullPath = path.join(process.cwd(), resume.file_path);
-            await fs.unlink(fullPath);
-            console.log(`Deleted file: ${resume.file_path}`);
-        } catch (fileError) {
-            console.error('Error deleting file:', fileError);
-            // Continue even if file deletion fails
-        }
+        // Delete from database first
+        const deleteQuery = `
+            DELETE FROM resumes
+            WHERE id = $1 AND user_id = $2
+        `;
 
-        // Delete from database (parsed data is in same row, so it's deleted too)
-        await query('DELETE FROM resumes WHERE id = $1', [resumeId]);
+        await query(deleteQuery, [id, req.user.id]);
+
+        // Try to delete the file (handle both storage types)
+        try {
+            if (resume.file_path.startsWith('http') || resume.file_path.startsWith('https')) {
+                // S3 file - need to use AWS SDK to delete
+                console.log('S3 file deletion should be handled here');
+                // TODO: Implement S3 deletion using AWS SDK
+                // const { DeleteObjectCommand } = require('@aws-sdk/client-s3');
+                // await s3Client.send(new DeleteObjectCommand({
+                //     Bucket: process.env.S3_BUCKET_NAME,
+                //     Key: resume.file_path
+                // }));
+            } else if (resume.file_path.startsWith('resumes/')) {
+                // S3 key stored in database
+                console.log('S3 file deletion should be handled here for key:', resume.file_path);
+                // TODO: Implement S3 deletion
+            } else {
+                // Local file
+                const fullPath = path.join(__dirname, '../../', resume.file_path);
+                await fs.unlink(fullPath);
+                console.log('Deleted local file:', fullPath);
+            }
+        } catch (fileError) {
+            // Log error but don't fail the request since DB record is already deleted
+            console.error('Error deleting file:', fileError);
+        }
 
         res.json({
             success: true,
-            message: 'Resume and all associated data deleted successfully'
+            message: 'Resume deleted successfully'
         });
+
     } catch (error) {
         console.error('Error deleting resume:', error);
         res.status(500).json({
@@ -431,6 +436,7 @@ async function deleteResume(req, res) {
     }
 }
 
+// Export all controller functions
 module.exports = {
     uploadResume,
     getUserResumes,

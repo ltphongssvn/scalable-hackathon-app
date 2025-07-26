@@ -1,4 +1,5 @@
 // Enhanced Voice Resume Controller
+// Updated to support both local and S3 storage
 // File: src/controllers/voiceResumeController.js
 
 const path = require('path');
@@ -12,7 +13,8 @@ const confidenceScoreService = require('../services/confidenceScoreService');
 
 /**
  * Upload and process a voice resume with enhanced features
- * Now includes real-time status tracking and confidence scoring
+ * Now supports both local and S3 storage
+ * Includes real-time status tracking and confidence scoring
  */
 async function uploadVoiceResume(req, res) {
     try {
@@ -24,15 +26,38 @@ async function uploadVoiceResume(req, res) {
             });
         }
 
-        const {
-            filename,
-            path: filePath,
-            size,
-            mimetype
-        } = req.file;
+        // Detect storage type and extract file information accordingly
+        let fileInfo = {};
+
+        // Check if this is an S3 upload (multer-s3 adds these properties)
+        if (req.file.location && req.file.key) {
+            // S3 storage
+            console.log('Processing S3 voice upload');
+            fileInfo = {
+                filename: req.file.key.split('/').pop(), // Extract filename from S3 key
+                filePath: req.file.location,             // Full S3 URL
+                storagePath: req.file.key,               // S3 key for database
+                size: req.file.size,
+                mimetype: req.file.contentType || req.file.mimetype,
+                isS3: true
+            };
+        } else {
+            // Local storage
+            console.log('Processing local voice upload');
+            fileInfo = {
+                filename: req.file.filename,
+                filePath: req.file.path,
+                storagePath: `uploads/voice-resumes/${req.file.filename}`,
+                size: req.file.size,
+                mimetype: req.file.mimetype,
+                isS3: false
+            };
+        }
 
         const originalName = req.uploadedFileOriginalName || req.file.originalname;
+
         console.log(`Processing voice resume upload: ${originalName}`);
+        console.log(`Storage type: ${fileInfo.isS3 ? 'S3' : 'Local'}`);
 
         // Store the audio file metadata in database with initial status
         const insertQuery = `
@@ -53,11 +78,11 @@ async function uploadVoiceResume(req, res) {
 
         const values = [
             req.user.id,
-            filename,
+            fileInfo.filename,
             originalName,
-            `uploads/voice-resumes/${filename}`,
-            size,
-            mimetype,
+            fileInfo.storagePath,  // This will be S3 key or local path
+            fileInfo.size,
+            fileInfo.mimetype,
             'voice',
             'uploaded' // Initial status
         ];
@@ -68,7 +93,8 @@ async function uploadVoiceResume(req, res) {
         console.log(`Voice resume saved to database with ID: ${resume.id}`);
 
         // Trigger async processing
-        processVoiceResumeAsync(resume.id, filePath, req.user.id);
+        // For S3 files, we pass the S3 URL; for local files, we pass the file path
+        processVoiceResumeAsync(resume.id, fileInfo.filePath, req.user.id, fileInfo.isS3);
 
         res.status(201).json({
             success: true,
@@ -79,17 +105,19 @@ async function uploadVoiceResume(req, res) {
                 size: resume.file_size,
                 uploadedAt: resume.uploaded_at,
                 processingStatus: 'uploaded',
-                statusEndpoint: `/api/v1/voiceresumes/${resume.id}/status`
+                statusEndpoint: `/api/v1/voiceresumes/${resume.id}/status`,
+                storageType: fileInfo.isS3 ? 's3' : 'local'
             }
         });
 
     } catch (error) {
         console.error('Voice resume upload error:', error);
 
-        // Clean up file if database operation failed
-        if (req.file) {
+        // Clean up file if database operation failed and using local storage
+        if (req.file && req.file.path && !req.file.location) {
             try {
                 await fs.unlink(req.file.path);
+                console.log('Cleaned up uploaded file after error');
             } catch (unlinkError) {
                 console.error('Error deleting file:', unlinkError);
             }
@@ -97,28 +125,34 @@ async function uploadVoiceResume(req, res) {
 
         res.status(500).json({
             success: false,
-            message: 'Failed to upload voice resume'
+            message: 'Failed to upload voice resume',
+            error: process.env.NODE_ENV === 'development' ? error.message : undefined
         });
     }
 }
 
 /**
  * Enhanced async processing with status tracking and confidence scoring
+ * Now handles both local files and S3 URLs
  */
-async function processVoiceResumeAsync(resumeId, audioFilePath, userId) {
+async function processVoiceResumeAsync(resumeId, audioFilePath, userId, isS3 = false) {
     let currentStage = 'uploaded';
+    let tempTextPath = null;
 
     try {
         console.log(`Starting enhanced voice resume processing for ID: ${resumeId}`);
+        console.log(`Processing from ${isS3 ? 'S3 URL' : 'local file'}: ${audioFilePath}`);
 
         // Step 1: Update status to transcribing
         await resumeStatusService.updateStatus(resumeId, 'transcribing', {
             audioFilePath,
+            storageType: isS3 ? 's3' : 'local',
             startTime: new Date().toISOString()
         });
         currentStage = 'transcribing';
 
         console.log('Step 1: Transcribing audio...');
+        // The transcription service should be able to handle both local paths and S3 URLs
         const transcriptionResult = await voiceTranscriptionService.transcribeAudio(audioFilePath);
 
         if (!transcriptionResult.success) {
@@ -137,9 +171,9 @@ async function processVoiceResumeAsync(resumeId, audioFilePath, userId) {
 
         // Store transcription result
         await query(
-            `UPDATE resumes 
-             SET transcription_data = $1, 
-                 transcribed_at = NOW() 
+            `UPDATE resumes
+             SET transcription_data = $1,
+                 transcribed_at = NOW()
              WHERE id = $2 AND user_id = $3`,
             [
                 JSON.stringify({
@@ -166,21 +200,14 @@ async function processVoiceResumeAsync(resumeId, audioFilePath, userId) {
         );
 
         // Create a temporary text file for the parser
-        const tempTextPath = path.join(
-            path.dirname(audioFilePath),
-            `transcript_${resumeId}.txt`
-        );
+        // For S3 files, we'll create the temp file in the system temp directory
+        const tempDir = isS3 ? require('os').tmpdir() : path.dirname(audioFilePath);
+        tempTextPath = path.join(tempDir, `transcript_${resumeId}.txt`);
+
         await fs.writeFile(tempTextPath, formatted.formattedText, 'utf8');
 
         console.log('Step 3: Parsing transcribed text...');
         const parseResult = await huggingFaceService.parseResume(tempTextPath);
-
-        // Clean up temporary file
-        try {
-            await fs.unlink(tempTextPath);
-        } catch (e) {
-            console.error('Error cleaning up temp file:', e);
-        }
 
         if (!parseResult.success) {
             throw new Error(`Parsing failed: ${parseResult.error}`);
@@ -200,7 +227,6 @@ async function processVoiceResumeAsync(resumeId, audioFilePath, userId) {
         currentStage = 'enhancing';
 
         console.log('Step 4: Enhancing parsed data with AI insights...');
-
         let enhancedParsedData = parseResult.data;
 
         try {
@@ -274,6 +300,7 @@ async function processVoiceResumeAsync(resumeId, audioFilePath, userId) {
         const finalEnhancedData = {
             ...enhancedParsedData,
             sourceType: 'voice',
+            storageType: isS3 ? 's3' : 'local',
             transcriptionQuality: transcriptionResult.quality,
             originalAudioDuration: formatted.metadata?.duration,
             detectedSections: formatted.detectedSections,
@@ -289,10 +316,12 @@ async function processVoiceResumeAsync(resumeId, audioFilePath, userId) {
 
         // Update database with enhanced parsed data
         await query(
-            `UPDATE resumes 
-             SET parsed_data = $1, 
+            `UPDATE resumes
+             SET parsed_data = $1,
                  parsed_at = NOW(),
-                 confidence_scores = $2
+                 confidence_scores = $2,
+                 processing_status = 'completed',
+                 processing_completed_at = NOW()
              WHERE id = $3 AND user_id = $4`,
             [
                 JSON.stringify(finalEnhancedData),
@@ -341,9 +370,10 @@ async function processVoiceResumeAsync(resumeId, audioFilePath, userId) {
 
         // Store error state
         await query(
-            `UPDATE resumes 
-             SET parsed_data = $1, 
-                 parsed_at = NOW() 
+            `UPDATE resumes
+             SET parsed_data = $1,
+                 parsed_at = NOW(),
+                 processing_status = 'failed'
              WHERE id = $2 AND user_id = $3`,
             [
                 JSON.stringify({
@@ -356,6 +386,17 @@ async function processVoiceResumeAsync(resumeId, audioFilePath, userId) {
                 userId
             ]
         );
+    } finally {
+        // Clean up temporary file if it was created
+        if (tempTextPath) {
+            try {
+                await fs.unlink(tempTextPath);
+                console.log('Cleaned up temporary transcript file');
+            } catch (unlinkError) {
+                console.error('Error cleaning up temp file:', unlinkError);
+                // Don't throw, as this is just cleanup
+            }
+        }
     }
 }
 
@@ -369,9 +410,9 @@ async function getVoiceResumeTranscription(req, res) {
 
         const result = await query(
             `SELECT 
-                id, 
-                original_name, 
-                transcription_data, 
+                id,
+                original_name,
+                transcription_data,
                 transcribed_at,
                 processing_status,
                 confidence_scores,
@@ -389,6 +430,7 @@ async function getVoiceResumeTranscription(req, res) {
         }
 
         const resume = result.rows[0];
+
         let transcriptionData = null;
         let confidenceData = null;
         let parsedData = null;
@@ -433,7 +475,8 @@ async function getVoiceResumeTranscription(req, res) {
                 transcription: transcriptionData,
                 confidence: confidenceData,
                 parsedData: parsedData,
-                isComplete: resume.processing_status === 'completed'
+                isComplete: resume.processing_status === 'completed',
+                storageType: parsedData?.storageType || 'unknown'
             }
         });
 
@@ -448,5 +491,6 @@ async function getVoiceResumeTranscription(req, res) {
 
 module.exports = {
     uploadVoiceResume,
-    getVoiceResumeTranscription
+    getVoiceResumeTranscription,
+    processVoiceResumeAsync  // Exported for retry functionality
 };

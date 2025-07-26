@@ -1,11 +1,10 @@
 // Enhanced Voice Resume Routes
 // File: src/routes/voiceResumeRoutes.js
-
 const express = require('express');
 const router = express.Router();
-const multer = require('multer');
 const path = require('path');
 const { authenticate } = require('../middleware/auth');
+const { voiceUpload } = require('../config/unifiedUploadConfig');
 const {
     uploadVoiceResume,
     getVoiceResumeTranscription
@@ -14,87 +13,18 @@ const resumeStatusService = require('../services/resumeStatusService');
 const resumeJobComparisonService = require('../services/resumeJobComparisonService');
 const { query } = require('../config/database');
 
-// Configure multer for voice resume uploads
-const storage = multer.diskStorage({
-    destination: async (req, file, cb) => {
-        const uploadPath = path.join(__dirname, '../../uploads/voice-resumes');
-
-        // Ensure the directory exists
-        const fs = require('fs').promises;
-        try {
-            await fs.mkdir(uploadPath, { recursive: true });
-        } catch (error) {
-            console.error('Error creating upload directory:', error);
-        }
-
-        cb(null, uploadPath);
-    },
-    filename: (req, file, cb) => {
-        // Generate unique filename
-        const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
-        const ext = path.extname(file.originalname);
-        const filename = `voice-resume-${req.user.id}-${uniqueSuffix}${ext}`;
-
-        // Store original name for later use
-        req.uploadedFileOriginalName = file.originalname;
-
-        cb(null, filename);
-    }
-});
-
-// File filter to ensure only audio files are accepted
-const fileFilter = (req, file, cb) => {
-    // Accept common audio formats
-    const allowedMimeTypes = [
-        'audio/mpeg',        // MP3
-        'audio/mp3',
-        'audio/wav',         // WAV
-        'audio/wave',
-        'audio/x-wav',
-        'audio/webm',        // WebM
-        'audio/ogg',         // OGG
-        'audio/m4a',         // M4A
-        'audio/x-m4a',
-        'audio/mp4',         // MP4 audio
-        'audio/aac',         // AAC
-        'audio/flac',        // FLAC
-        'audio/x-flac',
-        'audio/3gpp',        // 3GP
-        'audio/3gpp2'        // 3G2
-    ];
-
-    if (allowedMimeTypes.includes(file.mimetype)) {
-        cb(null, true);
-    } else {
-        cb(new Error(`Invalid file type. Accepted formats: MP3, WAV, WebM, OGG, M4A, AAC, FLAC. Received: ${file.mimetype}`), false);
-    }
-};
-
-const upload = multer({
-    storage: storage,
-    fileFilter: fileFilter,
-    limits: {
-        fileSize: 50 * 1024 * 1024 // 50MB limit
-    }
-});
-
 // Error handling middleware for multer
+// This middleware handles upload errors gracefully
 const handleMulterError = (err, req, res, next) => {
-    if (err instanceof multer.MulterError) {
-        if (err.code === 'LIMIT_FILE_SIZE') {
-            return res.status(400).json({
-                success: false,
-                message: 'File too large. Maximum size is 50MB.'
-            });
-        }
+    if (err && err.code === 'LIMIT_FILE_SIZE') {
         return res.status(400).json({
             success: false,
-            message: `Upload error: ${err.message}`
+            message: 'File too large. Maximum size is 25MB.'
         });
     } else if (err) {
         return res.status(400).json({
             success: false,
-            message: err.message
+            message: err.message || 'Upload error occurred'
         });
     }
     next();
@@ -103,7 +33,7 @@ const handleMulterError = (err, req, res, next) => {
 // Main routes
 router.post('/upload-voice',
     authenticate,
-    upload.single('audio'),
+    voiceUpload.single('audio'),
     handleMulterError,
     uploadVoiceResume
 );
@@ -114,7 +44,6 @@ router.get('/:id/transcription',
 );
 
 // New Enhancement Routes
-
 /**
  * Get real-time processing status for a voice resume
  */
@@ -137,7 +66,6 @@ router.get('/:id/status', authenticate, async (req, res) => {
             success: true,
             data: status
         });
-
     } catch (error) {
         console.error('Error fetching resume status:', error);
         res.status(500).json({
@@ -158,7 +86,6 @@ router.get('/stats', authenticate, async (req, res) => {
             success: true,
             data: stats
         });
-
     } catch (error) {
         console.error('Error fetching user stats:', error);
         res.status(500).json({
@@ -242,7 +169,6 @@ router.post('/:id/compare', authenticate, async (req, res) => {
             success: true,
             data: comparisonResult
         });
-
     } catch (error) {
         console.error('Error comparing resume to job:', error);
         res.status(500).json({
@@ -305,7 +231,6 @@ router.get('/:id/comparisons', authenticate, async (req, res) => {
             success: true,
             data: comparisons
         });
-
     } catch (error) {
         console.error('Error fetching comparison history:', error);
         res.status(500).json({
@@ -369,7 +294,6 @@ router.get('/', authenticate, async (req, res) => {
             WHERE user_id = $1 AND resume_type = 'voice'
             ${status !== 'all' ? 'AND processing_status = $2' : ''}
         `;
-
         const countParams = [req.user.id];
         if (status !== 'all') countParams.push(status);
 
@@ -414,7 +338,6 @@ router.get('/', authenticate, async (req, res) => {
                 }
             }
         });
-
     } catch (error) {
         console.error('Error fetching voice resumes:', error);
         res.status(500).json({
@@ -478,7 +401,6 @@ router.post('/:id/retry', authenticate, async (req, res) => {
                 statusEndpoint: `/api/v1/voiceresumes/${resumeId}/status`
             }
         });
-
     } catch (error) {
         console.error('Error retrying resume processing:', error);
         res.status(500).json({
